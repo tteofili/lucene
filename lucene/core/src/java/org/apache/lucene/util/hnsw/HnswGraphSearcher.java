@@ -179,6 +179,11 @@ public class HnswGraphSearcher {
     return collector.earlyTerminated() ? -1 : currentEp;
   }
 
+
+  boolean maybeScore(float probability) {
+    return Math.random() <= probability;
+  }
+
   /**
    * Add the closest neighbors found to a priority queue (heap). These are returned in REVERSE
    * proximity order -- the most distant neighbor of the topK found, i.e. the one with the lowest
@@ -203,11 +208,13 @@ public class HnswGraphSearcher {
         if (results.earlyTerminated()) {
           break;
         }
-        float score = scorer.score(ep);
-        results.incVisitedCount(1);
-        candidates.add(ep, score);
-        if (acceptOrds == null || acceptOrds.get(ep)) {
-          results.collect(ep, score);
+        if (maybeScore(0.2f)) {
+          float score = scorer.score(ep);
+          results.incVisitedCount(1);
+          candidates.add(ep, score);
+          if (acceptOrds == null || acceptOrds.get(ep)) {
+            results.collect(ep, score);
+          }
         }
       }
     }
@@ -234,13 +241,15 @@ public class HnswGraphSearcher {
         if (results.earlyTerminated()) {
           break;
         }
-        float friendSimilarity = scorer.score(friendOrd);
-        results.incVisitedCount(1);
-        if (friendSimilarity > minAcceptedSimilarity) {
-          candidates.add(friendOrd, friendSimilarity);
-          if (acceptOrds == null || acceptOrds.get(friendOrd)) {
-            if (results.collect(friendOrd, friendSimilarity)) {
-              minAcceptedSimilarity = results.minCompetitiveSimilarity();
+        if (maybeScore(0.2f)) {
+          float friendSimilarity = scorer.score(friendOrd);
+          results.incVisitedCount(1);
+          if (friendSimilarity > minAcceptedSimilarity) {
+            candidates.add(friendOrd, friendSimilarity);
+            if (acceptOrds == null || acceptOrds.get(friendOrd)) {
+              if (results.collect(friendOrd, friendSimilarity)) {
+                minAcceptedSimilarity = results.minCompetitiveSimilarity();
+              }
             }
           }
         }
