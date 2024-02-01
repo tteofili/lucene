@@ -66,6 +66,15 @@ public final class VectorUtil {
     return r;
   }
 
+  public static float approximateDotProduct(float[] a, float[] b) {
+    if (a.length != b.length) {
+      throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
+    }
+    float r = IMPL.approximateDotProduct(a, b);
+    assert Float.isFinite(r);
+    return r;
+  }
+
   /**
    * Returns the cosine similarity between the two vectors.
    *
@@ -80,12 +89,28 @@ public final class VectorUtil {
     return r;
   }
 
+  public static float approximateCosine(float[] a, float[] b) {
+    if (a.length != b.length) {
+      throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
+    }
+    float r = IMPL.approximateCosine(a, b);
+    assert Float.isFinite(r);
+    return r;
+  }
+
   /** Returns the cosine similarity between the two vectors. */
   public static float cosine(byte[] a, byte[] b) {
     if (a.length != b.length) {
       throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
     }
     return IMPL.cosine(a, b);
+  }
+
+  public static float approximateCosine(byte[] a, byte[] b) {
+    if (a.length != b.length) {
+      throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
+    }
+    return IMPL.approximateCosine(a, b);
   }
 
   /**
@@ -108,6 +133,22 @@ public final class VectorUtil {
       throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
     }
     return IMPL.squareDistance(a, b);
+  }
+
+  public static float approximateSquareDistance(float[] a, float[] b) {
+    if (a.length != b.length) {
+      throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
+    }
+    float r = IMPL.approximateSquareDistance(a, b);
+    assert Float.isFinite(r);
+    return r;
+  }
+
+  public static int approximateSquareDistance(byte[] a, byte[] b) {
+    if (a.length != b.length) {
+      throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
+    }
+    return IMPL.approximateSquareDistance(a, b);
   }
 
   /**
@@ -175,6 +216,13 @@ public final class VectorUtil {
     return IMPL.dotProduct(a, b);
   }
 
+  public static int approximateDotProduct(byte[] a, byte[] b) {
+    if (a.length != b.length) {
+      throw new IllegalArgumentException("vector dimensions differ: " + a.length + "!=" + b.length);
+    }
+    return IMPL.approximateDotProduct(a, b);
+  }
+
   /**
    * Dot product score computed over signed bytes, scaled to be in [0, 1].
    *
@@ -186,6 +234,12 @@ public final class VectorUtil {
     // divide by 2 * 2^14 (maximum absolute value of product of 2 signed bytes) * len
     float denom = (float) (a.length * (1 << 15));
     return 0.5f + dotProduct(a, b) / denom;
+  }
+
+  public static float approximateDotProductScore(byte[] a, byte[] b) {
+    // divide by 2 * 2^14 (maximum absolute value of product of 2 signed bytes) * len
+    float denom = (float) (a.length * (1 << 15));
+    return 0.5f + approximateDotProduct(a, b) / denom;
   }
 
   /**

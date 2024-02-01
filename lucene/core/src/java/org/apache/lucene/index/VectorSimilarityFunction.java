@@ -16,11 +16,7 @@
  */
 package org.apache.lucene.index;
 
-import static org.apache.lucene.util.VectorUtil.cosine;
-import static org.apache.lucene.util.VectorUtil.dotProduct;
-import static org.apache.lucene.util.VectorUtil.dotProductScore;
-import static org.apache.lucene.util.VectorUtil.scaleMaxInnerProductScore;
-import static org.apache.lucene.util.VectorUtil.squareDistance;
+import static org.apache.lucene.util.VectorUtil.*;
 
 /**
  * Vector similarity function; used in search to return top K most similar vectors to a target
@@ -39,6 +35,16 @@ public enum VectorSimilarityFunction {
     @Override
     public float compare(byte[] v1, byte[] v2) {
       return 1 / (1f + squareDistance(v1, v2));
+    }
+
+    @Override
+    public float compareApprox(byte[] v1, byte[] v2) {
+      return 1 / (1f + approximateSquareDistance(v1, v2));
+    }
+
+    @Override
+    public float compareApprox(float[] v1, float[] v2) {
+      return 1 / (1f + approximateSquareDistance(v1, v2));
     }
   },
 
@@ -59,6 +65,16 @@ public enum VectorSimilarityFunction {
     public float compare(byte[] v1, byte[] v2) {
       return dotProductScore(v1, v2);
     }
+
+    @Override
+    public float compareApprox(byte[] v1, byte[] v2) {
+      return approximateDotProductScore(v1, v2);
+    }
+
+    @Override
+    public float compareApprox(float[] v1, float[] v2) {
+      return Math.max((1 + approximateDotProduct(v1, v2)) / 2, 0);
+    }
   },
 
   /**
@@ -77,6 +93,16 @@ public enum VectorSimilarityFunction {
     public float compare(byte[] v1, byte[] v2) {
       return (1 + cosine(v1, v2)) / 2;
     }
+
+    @Override
+    public float compareApprox(byte[] v1, byte[] v2) {
+      return (1 + approximateCosine(v1, v2)) / 2;
+    }
+
+    @Override
+    public float compareApprox(float[] v1, float[] v2) {
+      return (1 + approximateCosine(v1, v2)) / 2;
+    }
   },
 
   /**
@@ -93,6 +119,16 @@ public enum VectorSimilarityFunction {
     @Override
     public float compare(byte[] v1, byte[] v2) {
       return scaleMaxInnerProductScore(dotProduct(v1, v2));
+    }
+
+    @Override
+    public float compareApprox(byte[] query, byte[] bytes) {
+      return 0;
+    }
+
+    @Override
+    public float compareApprox(float[] v1, float[] v2) {
+      return 0;
     }
   };
 
@@ -116,4 +152,25 @@ public enum VectorSimilarityFunction {
    * @return the value of the similarity function applied to the two vectors
    */
   public abstract float compare(byte[] v1, byte[] v2);
+
+  /**
+   * Calculates an approximate similarity score between the two vectors with a specified function.
+   * Higher similarity scores correspond to closer vectors.
+   *
+   * @param v1 a vector
+   * @param v2 another vector, of the same dimension
+   * @return the value of the similarity function applied to the two vectors
+   */
+  public abstract float compareApprox(byte[] v1, byte[] v2);
+
+  /**
+   * Calculates an approximate similarity score between the two vectors with a specified function.
+   * Higher similarity scores correspond to closer vectors. Each (signed) byte represents a vector
+   * dimension.
+   *
+   * @param v1 a vector
+   * @param v2 another vector, of the same dimension
+   * @return the value of the similarity function applied to the two vectors
+   */
+  public abstract float compareApprox(float[] v1, float[] v2);
 }

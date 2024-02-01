@@ -576,4 +576,28 @@ final class PanamaVectorUtilSupport implements VectorUtilSupport {
     // reduce
     return acc1.add(acc2).reduceLanes(ADD);
   }
+
+  public float approximateDotProduct(float[] a, float[] b) {
+    throw new UnsupportedOperationException();
+  }
+
+  public float approximateCosine(float[] a, float[] b) {
+    throw new UnsupportedOperationException();
+  }
+
+  public float approximateSquareDistance(float[] a, float[] b) {
+    throw new UnsupportedOperationException();
+  }
+
+  public int approximateDotProduct(byte[] a, byte[] b) {
+    throw new UnsupportedOperationException();
+  }
+
+  public float approximateCosine(byte[] a, byte[] b) {
+    throw new UnsupportedOperationException();
+  }
+
+  public int approximateSquareDistance(byte[] a, byte[] b) {
+    throw new UnsupportedOperationException();
+  }
 }

@@ -147,7 +147,7 @@ public class HnswGraphSearcher {
     }
     int size = getGraphSize(graph);
     prepareScratchState(size);
-    float currentScore = scorer.score(currentEp);
+    float currentScore = scorer.scoreApprox(currentEp);
     collector.incVisitedCount(1);
     boolean foundBetter;
     for (int level = graph.numLevels() - 1; level >= 1; level--) {
@@ -179,7 +179,6 @@ public class HnswGraphSearcher {
     return collector.earlyTerminated() ? -1 : currentEp;
   }
 
-
   boolean maybeScore(float probability) {
     return Math.random() <= probability;
   }
@@ -208,13 +207,11 @@ public class HnswGraphSearcher {
         if (results.earlyTerminated()) {
           break;
         }
-        if (maybeScore(0.2f)) {
-          float score = scorer.score(ep);
-          results.incVisitedCount(1);
-          candidates.add(ep, score);
-          if (acceptOrds == null || acceptOrds.get(ep)) {
-            results.collect(ep, score);
-          }
+        float score = scorer.score(ep);
+        results.incVisitedCount(1);
+        candidates.add(ep, score);
+        if (acceptOrds == null || acceptOrds.get(ep)) {
+          results.collect(ep, score);
         }
       }
     }
@@ -241,15 +238,18 @@ public class HnswGraphSearcher {
         if (results.earlyTerminated()) {
           break;
         }
-        if (maybeScore(0.2f)) {
-          float friendSimilarity = scorer.score(friendOrd);
-          results.incVisitedCount(1);
-          if (friendSimilarity > minAcceptedSimilarity) {
-            candidates.add(friendOrd, friendSimilarity);
-            if (acceptOrds == null || acceptOrds.get(friendOrd)) {
-              if (results.collect(friendOrd, friendSimilarity)) {
-                minAcceptedSimilarity = results.minCompetitiveSimilarity();
-              }
+        float friendSimilarity;
+        if (maybeScore(0.9f)) {
+          friendSimilarity = scorer.score(friendOrd);
+        } else {
+          friendSimilarity = scorer.scoreApprox(friendOrd);
+        }
+        results.incVisitedCount(1);
+        if (friendSimilarity > minAcceptedSimilarity) {
+          candidates.add(friendOrd, friendSimilarity);
+          if (acceptOrds == null || acceptOrds.get(friendOrd)) {
+            if (results.collect(friendOrd, friendSimilarity)) {
+              minAcceptedSimilarity = results.minCompetitiveSimilarity();
             }
           }
         }

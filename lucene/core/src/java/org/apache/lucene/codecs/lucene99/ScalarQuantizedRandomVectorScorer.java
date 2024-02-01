@@ -85,4 +85,9 @@ final class ScalarQuantizedRandomVectorScorer
     return similarity.score(
         quantizedQuery, this.queryOffset, storedVectorValue, storedVectorCorrection);
   }
+
+  @Override
+  public float scoreApprox(int node) {
+    throw new UnsupportedOperationException();
+  }
 }

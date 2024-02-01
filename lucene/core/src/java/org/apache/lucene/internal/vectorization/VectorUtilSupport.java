@@ -27,18 +27,30 @@ public interface VectorUtilSupport {
   /** Calculates the dot product of the given float arrays. */
   float dotProduct(float[] a, float[] b);
 
+  float approximateDotProduct(float[] a, float[] b);
+
   /** Returns the cosine similarity between the two vectors. */
   float cosine(float[] v1, float[] v2);
+
+  float approximateCosine(float[] v1, float[] v2);
 
   /** Returns the sum of squared differences of the two vectors. */
   float squareDistance(float[] a, float[] b);
 
+  float approximateSquareDistance(float[] a, float[] b);
+
   /** Returns the dot product computed over signed bytes. */
   int dotProduct(byte[] a, byte[] b);
+
+  int approximateDotProduct(byte[] a, byte[] b);
 
   /** Returns the cosine similarity between the two byte vectors. */
   float cosine(byte[] a, byte[] b);
 
+  float approximateCosine(byte[] a, byte[] b);
+
   /** Returns the sum of squared differences of the two byte vectors. */
   int squareDistance(byte[] a, byte[] b);
+
+  int approximateSquareDistance(byte[] a, byte[] b);
 }

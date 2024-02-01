@@ -84,6 +84,11 @@ public interface RandomVectorScorer {
       public float score(int node) throws IOException {
         return similarityFunction.compare(query, vectors.vectorValue(node));
       }
+
+      @Override
+      public float scoreApprox(int node) throws IOException {
+        return similarityFunction.compareApprox(query, vectors.vectorValue(node));
+      }
     };
   }
 
@@ -115,8 +120,15 @@ public interface RandomVectorScorer {
       public float score(int node) throws IOException {
         return similarityFunction.compare(query, vectors.vectorValue(node));
       }
+
+      @Override
+      public float scoreApprox(int node) throws IOException {
+        return similarityFunction.compareApprox(query, vectors.vectorValue(node));
+      }
     };
   }
+
+  float scoreApprox(int node) throws IOException;
 
   /**
    * Creates a default scorer for random access vectors.
