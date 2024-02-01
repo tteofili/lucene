@@ -55,7 +55,7 @@ final class DefaultVectorUtilSupport implements VectorUtilSupport {
           approximateDotProduct = new BoundMeanApproximateDotProductFunction();
           break;
         default:
-          approximateDotProduct = new RandomProjectionsApproximateDotProductFunction();
+          approximateDotProduct = new MeanSumApproximateDotProductFunction();
           break;
       }
       this.approxDotProdFunction = approximateDotProduct;
@@ -324,12 +324,11 @@ final class DefaultVectorUtilSupport implements VectorUtilSupport {
 
     RandomProjectionsApproximateDotProductFunction() {
       // TODO : fixed 300 dimensionality!
-      this.masks = new int[5][16];
-      this.masks[0] = random.ints(30, 0, 299).toArray();
-      this.masks[1] = random.ints(30, 0, 299).toArray();
-      this.masks[2] = random.ints(30, 0, 299).toArray();
-      this.masks[3] = random.ints(30, 0, 299).toArray();
-      this.masks[4] = random.ints(30, 0, 299).toArray();
+      this.masks = new int[4][8];
+      this.masks[0] = random.ints(8, 0, 299).toArray();
+      this.masks[1] = random.ints(8, 0, 299).toArray();
+      this.masks[2] = random.ints(8, 0, 299).toArray();
+      this.masks[3] = random.ints(8, 0, 299).toArray();
     }
 
     @Override
@@ -464,7 +463,7 @@ final class DefaultVectorUtilSupport implements VectorUtilSupport {
         normB = fma(b[i], b[i], normB);
       }
 
-      return (normA + normB) / 2;
+      return (normA + normB) / 10;
     }
   }
 

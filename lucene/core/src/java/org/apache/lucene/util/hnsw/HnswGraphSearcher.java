@@ -147,7 +147,7 @@ public class HnswGraphSearcher {
     }
     int size = getGraphSize(graph);
     prepareScratchState(size);
-    float currentScore = scorer.scoreApprox(currentEp);
+    float currentScore = scorer.score(currentEp);
     collector.incVisitedCount(1);
     boolean foundBetter;
     for (int level = graph.numLevels() - 1; level >= 1; level--) {
@@ -207,7 +207,12 @@ public class HnswGraphSearcher {
         if (results.earlyTerminated()) {
           break;
         }
-        float score = scorer.score(ep);
+        float score;
+        if (maybeScore(0.2f)) {
+          score = scorer.score(ep);
+        } else {
+          score = scorer.scoreApprox(ep);
+        }
         results.incVisitedCount(1);
         candidates.add(ep, score);
         if (acceptOrds == null || acceptOrds.get(ep)) {
@@ -238,12 +243,7 @@ public class HnswGraphSearcher {
         if (results.earlyTerminated()) {
           break;
         }
-        float friendSimilarity;
-        if (maybeScore(0.9f)) {
-          friendSimilarity = scorer.score(friendOrd);
-        } else {
-          friendSimilarity = scorer.scoreApprox(friendOrd);
-        }
+        float friendSimilarity = scorer.score(friendOrd);
         results.incVisitedCount(1);
         if (friendSimilarity > minAcceptedSimilarity) {
           candidates.add(friendOrd, friendSimilarity);
