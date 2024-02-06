@@ -113,6 +113,11 @@ public class VectorUtilBenchmark {
   }
 
   @Benchmark
+  public float floatApproxDotProductScalar() {
+    return VectorUtil.approximateDotProduct(floatsA, floatsB);
+  }
+
+  @Benchmark
   @Fork(
       value = 15,
       jvmArgsPrepend = {"--add-modules=jdk.incubator.vector"})
