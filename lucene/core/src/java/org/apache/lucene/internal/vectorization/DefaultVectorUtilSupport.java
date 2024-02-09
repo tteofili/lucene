@@ -29,36 +29,19 @@ final class DefaultVectorUtilSupport implements VectorUtilSupport {
   DefaultVectorUtilSupport() {
     String adpa = System.getProperty("approximate-dotproduct");
     if (adpa == null || adpa.isEmpty()) {
-      this.approxDotProdFunction = new RandomProjectionsApproximateDotProductFunction();
+      this.approxDotProdFunction = new MeanSumApproximateDotProductFunction();
     } else {
-      FloatApproximateDotProductFunction approximateDotProduct;
-      switch (adpa) {
-        case "meansum":
-          approximateDotProduct = new MeanSumApproximateDotProductFunction();
-          break;
-        case "xornet":
-          approximateDotProduct = new XorNetApproximateDotProductFunction();
-          break;
-        case "axornet":
-          approximateDotProduct = new ApproximateXorNetApproximateDotProductFunction();
-          break;
-        case "randproj":
-          approximateDotProduct = new RandomProjectionsApproximateDotProductFunction();
-          break;
-        case "norm1bound":
-          approximateDotProduct = new Norm1BoundApproximateDotProductFunction();
-          break;
-        case "norm2bound":
-          approximateDotProduct = new Norm2BoundApproximateDotProductFunction();
-          break;
-        case "boundmean":
-          approximateDotProduct = new BoundMeanApproximateDotProductFunction();
-          break;
-        default:
-          approximateDotProduct = new MeanSumApproximateDotProductFunction();
-          break;
-      }
-      this.approxDotProdFunction = approximateDotProduct;
+      FloatApproximateDotProductFunction approximateDotProduct = switch (adpa) {
+          case "meansum" -> new MeanSumApproximateDotProductFunction();
+          case "xornet" -> new XorNetApproximateDotProductFunction();
+          case "axornet" -> new ApproximateXorNetApproximateDotProductFunction();
+          case "randproj" -> new RandomProjectionsApproximateDotProductFunction();
+          case "norm1bound" -> new Norm1BoundApproximateDotProductFunction();
+          case "norm2bound" -> new Norm2BoundApproximateDotProductFunction();
+          case "boundmean" -> new BoundMeanApproximateDotProductFunction();
+          default -> new MeanSumApproximateDotProductFunction();
+      };
+        this.approxDotProdFunction = approximateDotProduct;
     }
   }
 
