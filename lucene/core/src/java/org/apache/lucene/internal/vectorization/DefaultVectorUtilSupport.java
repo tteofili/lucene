@@ -18,6 +18,9 @@
 package org.apache.lucene.internal.vectorization;
 
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.SuppressForbidden;
@@ -29,7 +32,7 @@ final class DefaultVectorUtilSupport implements VectorUtilSupport {
   DefaultVectorUtilSupport() {
     String adpa = System.getProperty("approximate-dotproduct");
     if (adpa == null || adpa.isEmpty()) {
-      this.approxDotProdFunction = new MeanSumApproximateDotProductFunction();
+      this.approxDotProdFunction = new CompositeApprox();
     } else {
       FloatApproximateDotProductFunction approximateDotProduct = switch (adpa) {
           case "meansum" -> new MeanSumApproximateDotProductFunction();
@@ -302,16 +305,21 @@ final class DefaultVectorUtilSupport implements VectorUtilSupport {
   private class RandomProjectionsApproximateDotProductFunction
       implements FloatApproximateDotProductFunction {
 
-    private final int[][] masks;
+    private int dims;
+    private int[][] masks;
     private final SecureRandom random = new SecureRandom();
 
     RandomProjectionsApproximateDotProductFunction() {
-      // TODO : fixed 300 dimensionality!
       this.masks = new int[4][8];
-      this.masks[0] = random.ints(8, 0, 299).toArray();
-      this.masks[1] = random.ints(8, 0, 299).toArray();
-      this.masks[2] = random.ints(8, 0, 299).toArray();
-      this.masks[3] = random.ints(8, 0, 299).toArray();
+      this.dims = 100;
+      initMasks();
+    }
+
+    private void initMasks() {
+      this.masks[0] = random.ints(8, 0, dims).toArray();
+      this.masks[1] = random.ints(8, 0, dims).toArray();
+      this.masks[2] = random.ints(8, 0, dims).toArray();
+      this.masks[3] = random.ints(8, 0, dims).toArray();
     }
 
     @Override
@@ -319,6 +327,10 @@ final class DefaultVectorUtilSupport implements VectorUtilSupport {
       float res;
       // if the array is big, unroll it
       if (a.length > 32) {
+        if (this.dims != a.length) {
+          this.dims = a.length;
+          initMasks();
+        }
         res = 1;
         for (int[] mask : masks) {
           float projRes = 0;
@@ -334,6 +346,29 @@ final class DefaultVectorUtilSupport implements VectorUtilSupport {
         }
       }
 
+      return res;
+    }
+  }
+
+  private class VectorQuantizationApproximateDotProductFunction implements FloatApproximateDotProductFunction {
+
+    @Override
+    public float approximateDotProduct(float[] a, float[] b) {
+      float res = 1f;
+      int i = 0;
+      int jump = 64;
+
+      // if the array is big, unroll it
+      if (a.length > 32) {
+        int upperBound = a.length & ~(jump - 1);
+        for (; i < upperBound; i += jump) {
+          res *= dotProduct(Arrays.copyOfRange(a, i, jump+i), Arrays.copyOfRange(b, i, jump+i));
+        }
+      }
+
+      if (i < a.length) {
+        res *= dotProduct(Arrays.copyOfRange(a, i, a.length-1), Arrays.copyOfRange(b, i, a.length-1));
+      }
       return res;
     }
   }
@@ -446,7 +481,7 @@ final class DefaultVectorUtilSupport implements VectorUtilSupport {
         normB = fma(b[i], b[i], normB);
       }
 
-      return (normA + normB) / 10;
+      return (float) ((Math.sqrt(normA) * Math.sqrt(normB)));
     }
   }
 
@@ -720,5 +755,33 @@ final class DefaultVectorUtilSupport implements VectorUtilSupport {
   private static float approxSquareRoot(double d) {
     return (float)
         Double.longBitsToDouble(((Double.doubleToLongBits(d) - (1L << 52)) >> 1) + (1L << 61));
+  }
+
+  private class CompositeApprox implements FloatApproximateDotProductFunction {
+    private final List<FloatApproximateDotProductFunction> functions;
+
+    public CompositeApprox() {
+      this.functions = List.of(
+              new MeanSumApproximateDotProductFunction(),
+              new Norm2BoundApproximateDotProductFunction(),
+              new Norm1BoundApproximateDotProductFunction(),
+              new BoundMeanApproximateDotProductFunction(),
+              new XorNetApproximateDotProductFunction(),
+              new ApproximateXorNetApproximateDotProductFunction(),
+              new VectorQuantizationApproximateDotProductFunction(),
+              new RandomProjectionsApproximateDotProductFunction());
+    }
+    @Override
+    public float approximateDotProduct(float[] a, float[] b) {
+      StringBuilder result = new StringBuilder();
+      float f = new DefaultVectorUtilSupport().dotProduct(a, b);
+      result.append(f).append(',');
+      for (FloatApproximateDotProductFunction c : functions) {
+        result.append(c.approximateDotProduct(a, b)).append(',');
+      }
+      result.append('\n');
+      System.err.println(result);
+      return f;
+    }
   }
 }
