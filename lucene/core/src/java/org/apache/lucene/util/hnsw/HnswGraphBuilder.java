@@ -20,14 +20,13 @@ package org.apache.lucene.util.hnsw;
 import static java.lang.Math.log;
 
 import java.io.IOException;
-import java.util.Locale;
-import java.util.Objects;
-import java.util.SplittableRandom;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.InfoStream;
+import org.apache.lucene.util.VectorUtil;
 
 /**
  * Builder for HNSW graph. See {@link HnswGraph} for a gloss on the algorithm and the meaning of the
@@ -237,6 +236,8 @@ public class HnswGraphBuilder implements HnswBuilder {
         eps[0] = candidates.popNode();
       }
 
+      RandomAccessVectorValues.Floats values = (RandomAccessVectorValues.Floats) ((RandomVectorScorer.AbstractRandomVectorScorer) scorer).values;
+
       // for levels <= nodeLevel search with topk = beamWidth, and add connections
       candidates = beamCandidates;
       NeighborArray[] scratchPerLevel =
@@ -246,13 +247,31 @@ public class HnswGraphBuilder implements HnswBuilder {
         candidates.clear();
         graphSearcher.searchLevel(candidates, scorer, level, eps, hnsw, null);
         eps = candidates.popUntilNearestKNodes();
+        List<float[]> residuals = new ArrayList<>(eps.length);
+        float[] newVector = values.vectorValue(node);
+        float[] residual = new float[newVector.length];
+        for (int neighborNode : eps) {
+          float[] neighbor = values.vectorValue(neighborNode);
+          /*
+          float score = scorer.score(neighborNode);
+          float normNeighbor = (float) Math.sqrt(VectorUtil.dotProduct(neighbor, neighbor)); // calculate the norm
+          float[] projection = new float[neighbor.length];
+          for (int idx = 0; idx < neighbor.length; idx++) {
+            projection[idx] = neighbor[idx] * (score / (normNeighbor * normNeighbor));
+          }*/
+          for (int idx = 0; idx < neighbor.length; idx++) {
+            residual[idx] = newVector[idx] - neighbor[idx];
+          }
+          residuals.add(residual);
+        }
+
         scratchPerLevel[i] = new NeighborArray(Math.max(beamCandidates.k(), M + 1), false);
-        popToScratch(candidates, scratchPerLevel[i]);
+        popToScratchWithProjections(candidates, scratchPerLevel[i], residuals);
       }
 
       // then do connections from bottom up
       for (int i = 0; i < scratchPerLevel.length; i++) {
-        addDiverseNeighbors(i + lowestUnsetLevel, node, scratchPerLevel[i]);
+        addDiverseAndOrthogonalNeighbors(values,i + lowestUnsetLevel, node, scratchPerLevel[i]);
       }
       lowestUnsetLevel += scratchPerLevel.length;
       assert lowestUnsetLevel == Math.min(nodeLevel, curMaxLevel) + 1;
@@ -321,6 +340,38 @@ public class HnswGraphBuilder implements HnswBuilder {
     }
   }
 
+  private void addDiverseAndOrthogonalNeighbors(RandomAccessVectorValues.Floats values, int level, int node, NeighborArray candidates)
+          throws IOException {
+    /* For each of the beamWidth nearest candidates (going from best to worst), select it only if it
+     * is closer to target than it is to any of the already-selected neighbors (ie selected in this method,
+     * since the node is new and has no prior neighbors).
+     */
+    NeighborArray neighbors = hnsw.getNeighbors(level, node);
+    assert neighbors.size() == 0; // new node
+    int maxConnOnLevel = level == 0 ? M * 2 : M;
+    boolean[] mask = selectAndLinkDiverseAndOrthogonal(values, neighbors, candidates, maxConnOnLevel);
+
+    // Link the selected nodes to the new node, and the new node to the selected nodes (again
+    // applying diversity heuristic)
+    // NOTE: here we're using candidates and mask but not the neighbour array because once we have
+    // added incoming link there will be possibilities of this node being discovered and neighbour
+    // array being modified. So using local candidates and mask is a safer option.
+    for (int i = 0; i < candidates.size(); i++) {
+      if (mask[i] == false) {
+        continue;
+      }
+      int nbr = candidates.nodes()[i];
+      NeighborArray nbrsOfNbr = hnsw.getNeighbors(level, nbr);
+      nbrsOfNbr.rwlock.writeLock().lock();
+      try {
+        nbrsOfNbr.addAndEnsureDiversity(node, candidates.scores()[i], nbr, scorerSupplier);
+      } finally {
+        nbrsOfNbr.rwlock.writeLock().unlock();
+      }
+    }
+  }
+
+
   /**
    * This method will select neighbors to add and return a mask telling the caller which candidates
    * are selected
@@ -345,6 +396,42 @@ public class HnswGraphBuilder implements HnswBuilder {
     return mask;
   }
 
+  private boolean[] selectAndLinkDiverseAndOrthogonal(RandomAccessVectorValues.Floats values,
+                                                      NeighborArray neighbors, NeighborArray candidates, int maxConnOnLevel) throws IOException {
+    boolean[] mask = new boolean[candidates.size()];
+    //int orthogonals = 0;
+    //int diverse = 0;
+    // Select the best maxConnOnLevel neighbors of the new node, applying the diversity heuristic
+    for (int i = candidates.size() - 1; neighbors.size() < maxConnOnLevel && i >= 0; i--) {
+      // compare each neighbor (in distance order) against the closer neighbors selected so far,
+      // only adding it if it is closer to the target than to any of the other selected neighbors
+      int cNode = candidates.nodes()[i];
+      float cScore = candidates.scores()[i];
+      float[] residual = candidates.residuals()[i];
+      assert cNode <= hnsw.maxNodeId();
+      if (diversityCheck(cNode, cScore, neighbors)) {
+        mask[i] = true;
+        // here we don't need to lock, because there's no incoming link so no others is able to
+        // discover this node such that no others will modify this neighbor array as well
+        neighbors.addInOrder(cNode, cScore, residual);
+        //diverse++;
+      } else {
+        float[] candidateVector = values.vectorValue(cNode);
+        for (int j = 0; j < neighbors.size(); j++) {
+          float[] neighborResidual = neighbors.residuals()[j];
+          if (VectorUtil.dotProduct(candidateVector, neighborResidual) < 1e-10) {
+            mask[i] = true;
+            neighbors.addInOrder(cNode, cScore, residual);
+            //orthogonals++;
+            break;
+          }
+        }
+      }
+    }
+    //System.err.println(orthogonals+":"+diverse);
+    return mask;
+  }
+
   private static void popToScratch(GraphBuilderKnnCollector candidates, NeighborArray scratch) {
     scratch.clear();
     int candidateCount = candidates.size();
@@ -353,6 +440,17 @@ public class HnswGraphBuilder implements HnswBuilder {
     for (int i = 0; i < candidateCount; i++) {
       float maxSimilarity = candidates.minimumScore();
       scratch.addInOrder(candidates.popNode(), maxSimilarity);
+    }
+  }
+
+  private static void popToScratchWithProjections(GraphBuilderKnnCollector candidates, NeighborArray scratch, List<float[]> residuals) {
+    scratch.clear();
+    int candidateCount = candidates.size();
+    // extract all the Neighbors from the queue into an array; these will now be
+    // sorted from worst to best
+    for (int i = 0; i < candidateCount; i++) {
+      float maxSimilarity = candidates.minimumScore();
+      scratch.addInOrder(candidates.popNode(), maxSimilarity, residuals.get(i));
     }
   }
 

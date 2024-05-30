@@ -57,7 +57,7 @@ public interface RandomVectorScorer {
 
   /** Creates a default scorer for random access vectors. */
   abstract class AbstractRandomVectorScorer implements RandomVectorScorer {
-    private final RandomAccessVectorValues values;
+    public final RandomAccessVectorValues values;
 
     /**
      * Creates a new scorer for the given vector values.

@@ -38,10 +38,12 @@ public class NeighborArray {
   private final int[] nodes;
   private int sortedNodeSize;
   public final ReadWriteLock rwlock = new ReentrantReadWriteLock(true);
+  private float[][] residuals;
 
   public NeighborArray(int maxSize, boolean descOrder) {
     nodes = new int[maxSize];
     scores = new float[maxSize];
+    residuals = null;
     this.scoresDescOrder = descOrder;
   }
 
@@ -65,6 +67,34 @@ public class NeighborArray {
     }
     nodes[size] = newNode;
     scores[size] = newScore;
+    ++size;
+    ++sortedNodeSize;
+  }
+
+  /**
+   * Add a new node to the NeighborArray, with its residual. The new node must be worse than all previously stored
+   * nodes. This cannot be called after {@link #addOutOfOrder(int, float)}
+   */
+  public void addInOrder(int newNode, float newScore, float[] residual) {
+    assert size == sortedNodeSize : "cannot call addInOrder after addOutOfOrder";
+    if (size == nodes.length) {
+      throw new IllegalStateException("No growth is allowed");
+    }
+    if (size > 0) {
+      float previousScore = scores[size - 1];
+      assert ((scoresDescOrder && (previousScore >= newScore))
+              || (scoresDescOrder == false && (previousScore <= newScore)))
+              : "Nodes are added in the incorrect order! Comparing "
+              + newScore
+              + " to "
+              + Arrays.toString(ArrayUtil.copyOfSubArray(scores, 0, size));
+    }
+    nodes[size] = newNode;
+    scores[size] = newScore;
+    if (residuals == null) {
+      residuals = new float[scores.length][residual.length];
+    }
+    residuals[size] = residual;
     ++size;
     ++sortedNodeSize;
   }
@@ -289,5 +319,20 @@ public class NeighborArray {
       }
     }
     return false;
+  }
+
+  private float[] calculateResidual(int vector, int neighbor, RandomVectorScorerSupplier scorerSupplier) throws IOException {
+    double dotProduct = scorerSupplier.scorer(vector).score(neighbor);
+    double normNeighbor = norm(neighbor); // calculate the norm
+    float[] projection = null;//scorerSupplier.scorer(neighbor), dotProduct / (normNeighbor * normNeighbor));
+    return null;//vector - projection;
+  }
+
+  private double norm(int neighbor) throws IOException {
+    return 1d;//VectorUtil.l2normalize(scorerSupplier.scorer(neighbor).);
+  }
+
+  public float[][] residuals() {
+    return residuals;
   }
 }
