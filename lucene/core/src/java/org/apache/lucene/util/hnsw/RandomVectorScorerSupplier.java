@@ -103,7 +103,7 @@ public interface RandomVectorScorerSupplier {
 
   /** RandomVectorScorerSupplier for Float vector */
   final class FloatScoringSupplier implements RandomVectorScorerSupplier {
-    private final RandomAccessVectorValues<float[]> vectors;
+    final RandomAccessVectorValues<float[]> vectors;
     private final RandomAccessVectorValues<float[]> vectors1;
     private final RandomAccessVectorValues<float[]> vectors2;
     private final VectorSimilarityFunction similarityFunction;

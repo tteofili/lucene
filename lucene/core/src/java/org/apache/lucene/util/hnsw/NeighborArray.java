@@ -39,9 +39,12 @@ public class NeighborArray {
   private int sortedNodeSize;
   public final ReadWriteLock rwlock = new ReentrantReadWriteLock(true);
 
+  private float[][] residuals;
+
   public NeighborArray(int maxSize, boolean descOrder) {
     nodes = new int[maxSize];
     scores = new float[maxSize];
+    residuals = null;
     this.scoresDescOrder = descOrder;
   }
 
@@ -69,6 +72,30 @@ public class NeighborArray {
     ++sortedNodeSize;
   }
 
+  public void addInOrder(int newNode, float newScore, float[] residual) {
+    assert size == sortedNodeSize : "cannot call addInOrder after addOutOfOrder";
+    if (size == nodes.length) {
+      throw new IllegalStateException("No growth is allowed");
+    }
+    if (size > 0) {
+      float previousScore = scores[size - 1];
+      assert ((scoresDescOrder && (previousScore >= newScore))
+              || (scoresDescOrder == false && (previousScore <= newScore)))
+              : "Nodes are added in the incorrect order! Comparing "
+              + newScore
+              + " to "
+              + Arrays.toString(ArrayUtil.copyOfSubArray(scores, 0, size));
+    }
+    nodes[size] = newNode;
+    scores[size] = newScore;
+    if (residuals == null) {
+      residuals = new float[scores.length][residual.length];
+    }
+    residuals[size] = residual;
+    ++size;
+    ++sortedNodeSize;
+  }
+
   /** Add node and newScore but do not insert as sorted */
   public void addOutOfOrder(int newNode, float newScore) {
     if (size == nodes.length) {
@@ -77,6 +104,19 @@ public class NeighborArray {
 
     scores[size] = newScore;
     nodes[size] = newNode;
+    size++;
+  }
+
+  public void addOutOfOrder(int newNode, float newScore, float[] residual) {
+    if (size == nodes.length) {
+      throw new IllegalStateException("No growth is allowed");
+    }
+    if (residuals == null) {
+      residuals = new float[scores.length][residual.length];
+    }
+    scores[size] = newScore;
+    nodes[size] = newNode;
+    residuals[size] = residual;
     size++;
   }
 
@@ -289,5 +329,9 @@ public class NeighborArray {
       }
     }
     return false;
+  }
+
+  public float[][] residuals() {
+    return residuals;
   }
 }
