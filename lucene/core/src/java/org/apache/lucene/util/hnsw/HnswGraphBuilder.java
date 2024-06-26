@@ -22,6 +22,8 @@ import static java.lang.Math.log;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.util.FixedBitSet;
@@ -327,7 +329,8 @@ public class HnswGraphBuilder implements HnswBuilder {
     NeighborArray neighbors = hnsw.getNeighbors(level, node);
     assert neighbors.size() == 0; // new node
     int maxConnOnLevel = level == 0 ? M * 2 : M;
-    boolean[] mask = selectAndLinkDiverseAndOrthogonal(values,neighbors, candidates, maxConnOnLevel);
+    //boolean[] mask = selectAndLinkDiverseAndOrthogonal(node, values, neighbors, candidates, maxConnOnLevel);
+    boolean[] mask = rankAndSelectByDiverseAndOrthogonal(values, node, neighbors, candidates, maxConnOnLevel);
 
     // Link the selected nodes to the new node, and the new node to the selected nodes (again
     // applying diversity heuristic)
@@ -349,7 +352,7 @@ public class HnswGraphBuilder implements HnswBuilder {
     }
   }
 
-  private boolean[] selectAndLinkDiverseAndOrthogonal(RandomAccessVectorValues values,
+  private boolean[] selectAndLinkDiverseAndOrthogonal(int node, RandomAccessVectorValues values,
                                                       NeighborArray neighbors, NeighborArray candidates, int maxConnOnLevel) throws IOException {
     boolean[] mask = new boolean[candidates.size()];
     int orthogonals = 0;
@@ -370,13 +373,12 @@ public class HnswGraphBuilder implements HnswBuilder {
         diverse++;
       }
       else {
-        //float[] candidateVector = (float[]) values.vectorValue(cNode);
         for (int j = 0; j < neighbors.size(); j++) {
-          float[] neighborResidual = neighbors.residuals()[j];
-          //float[] candidateVector = (float[]) values.vectorValue(cNode);
-          //float v = VectorUtil.dotProduct(candidateVector, neighborResidual);
-          float v = VectorUtil.dotProduct(candidateResidual, neighborResidual);
-          if (Math.abs(v) > 0.05) {
+          //float[] neighborResidual = neighbors.residuals()[j];
+          float[] neighborVector = (float[]) values.vectorValue(neighbors.nodes()[j]);
+          //scorerSupplier.scorer(neighbors.nodes()[i]).score()
+          float v = Math.abs(VectorUtil.dotProduct(candidateResidual, neighborVector));
+          if (0.955 < v && v < 0.999) {
             mask[i] = true;
             neighbors.addInOrder(cNode, cScore, candidateResidual);
             orthogonals++;
@@ -392,45 +394,78 @@ public class HnswGraphBuilder implements HnswBuilder {
   private boolean[] rankAndSelectByDiverseAndOrthogonal(RandomAccessVectorValues values, int node,
                                                       NeighborArray neighbors, NeighborArray candidates, int maxConnOnLevel) throws IOException {
     NeighborArray newNeighbors = new NeighborArray(candidates.size(), true);
+    float meanScore = 0;
     for (int i = 0; i < candidates.size(); i++) {
       int cNode = candidates.nodes()[i];
       float cScore = candidates.scores()[i];
       assert cNode <= hnsw.maxNodeId();
       float diversity = getDiversity(cNode, cScore, candidates);
       float orthogonality = getOrthogonality(cNode, candidates, values);
-      float adjustedScore = cScore * diversity * orthogonality;
+      float adjustedScore = 0.7f * cScore + 0.1f * diversity + 0.2f * orthogonality;
+      meanScore += adjustedScore;
       newNeighbors.addOutOfOrder(cNode, adjustedScore, candidates.residuals()[i]);
     }
-    newNeighbors.sort(scorerSupplier.scorer(node));
+    meanScore/=candidates.size();
 
+    RandomVectorScorer scorer = scorerSupplier.scorer(node);
+    newNeighbors.sort(scorer);
+
+    int maskLength = 0;
+    for (int i = 0; i < newNeighbors.size(); i++) {
+      if (newNeighbors.scores()[i] >= meanScore) {
+        maskLength++;
+      } else {
+        break;
+      }
+    }
 
     boolean[] mask = new boolean[candidates.size()];
-    for (int i = 0; i < mask.length/2; i++) {
-      mask[i] = true;
-      neighbors.addInOrder(newNeighbors.nodes()[i], newNeighbors.scores()[i], newNeighbors.residuals()[i]);
+
+    List<Integer> nodesToBeAdded = Arrays.stream(newNeighbors.nodes()).asLongStream().limit(maskLength).boxed().map(Long::intValue).collect(Collectors.toList());
+    for (int i = candidates.size() - 1; neighbors.size() < maxConnOnLevel && i >= 0; i--) {
+      boolean add = nodesToBeAdded.contains(candidates.nodes()[i]);
+      mask[i] = add;
+      if (add) {
+        neighbors.addOutOfOrder(candidates.nodes()[i], candidates.scores()[i], candidates.residuals()[i]);
+      }
     }
+    neighbors.sort(scorer);
     return mask;
   }
 
-  private float getOrthogonality(int cNode, NeighborArray neighbors, RandomAccessVectorValues values) throws IOException {
+  private float getOrthogonality(int cNode, NeighborArray candidates, RandomAccessVectorValues values) throws IOException {
     float orthogonality = 0;
-    for (int i = 0; i < neighbors.size(); i++) {
-      float residualSimilarity = VectorUtil.dotProduct((float[]) values.vectorValue(cNode), neighbors.residuals()[i]);
-      orthogonality+=1-Math.abs(residualSimilarity);
+    int checks = 0;
+    float[] vectorValue = (float[]) values.vectorValue(cNode);
+    for (int i = 0; i < candidates.size(); i++) {
+      int nNode = candidates.nodes()[i];
+      if (nNode == cNode) {
+        continue;
+      }
+      float residualSimilarity = VectorUtil.dotProduct(vectorValue, candidates.residuals()[i]);
+      checks++;
+      orthogonality += 1 - Math.abs(residualSimilarity);
     }
 
-    return neighbors.size() > 0 ? orthogonality/neighbors.size() : 1;
+    return checks > 0 ? orthogonality / checks : 1;
   }
 
-  private float getDiversity(int cNode, float cScore, NeighborArray neighbors) throws IOException {
+  // mean absolute error between score(newNode, candidateNode) and score(candidateNode, otherCandidate)
+  private float getDiversity(int cNode, float cScore, NeighborArray candidates) throws IOException {
     RandomVectorScorer scorer = scorerSupplier.scorer(cNode);
     float diversity = 0;
-    for (int i = 0; i < neighbors.size(); i++) {
-      float neighborSimilarity = scorer.score(neighbors.nodes()[i]);
-      diversity+= Math.abs(cScore - neighborSimilarity);
+    int checks = 0;
+    for (int i = 0; i < candidates.size(); i++) {
+      int nNode = candidates.nodes()[i];
+      if (nNode == cNode) {
+        continue;
+      }
+      float neighborSimilarity = scorer.score(nNode);
+      checks++;
+      diversity += Math.abs(cScore - neighborSimilarity);
     }
 
-    return neighbors.size() > 0 ? diversity/neighbors.size() : 1;
+    return checks > 0 ? diversity / checks : 1;
   }
 
   private void addDiverseNeighbors(int level, int node, NeighborArray candidates)
