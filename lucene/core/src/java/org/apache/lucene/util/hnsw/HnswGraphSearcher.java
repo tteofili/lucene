@@ -20,6 +20,10 @@ package org.apache.lucene.util.hnsw;
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.search.TopKnnCollector;
 import org.apache.lucene.util.BitSet;
@@ -214,7 +218,13 @@ public class HnswGraphSearcher {
 
     // A bound that holds the minimum similarity to the query vector that a candidate vector must
     // have to be considered.
+    int maxNoSaturated = (int) Math.max(candidates.size() / 1.5, 10);
+
+    int numDiff = 0;
+    int countSaturate = 0;
     float minAcceptedSimilarity = results.minCompetitiveSimilarity();
+    boolean patienceFinished = false;
+
     while (candidates.size() > 0 && results.earlyTerminated() == false) {
       // get the best candidate (closest or best scoring)
       float topCandidateSimilarity = candidates.topScore();
@@ -225,7 +235,11 @@ public class HnswGraphSearcher {
       int topCandidateNode = candidates.pop();
       graphSeek(graph, level, topCandidateNode);
       int friendOrd;
-      while ((friendOrd = graphNextNeighbor(graph)) != NO_MORE_DOCS) {
+
+      // conta ogni volta quanti ne aggiungi rispetto a quelli iniziali e vedi quant'è la percentuale di aggiunti
+      // rispetto al numero di candidati iniziale
+      while ((friendOrd = graphNextNeighbor(graph)) != NO_MORE_DOCS && !patienceFinished) {
+        numDiff = 0;
         assert friendOrd < size : "friendOrd=" + friendOrd + "; size=" + size;
         if (visited.getAndSet(friendOrd)) {
           continue;
@@ -238,12 +252,24 @@ public class HnswGraphSearcher {
         results.incVisitedCount(1);
         if (friendSimilarity > minAcceptedSimilarity) {
           candidates.add(friendOrd, friendSimilarity);
+          numDiff += 1;
           if (acceptOrds == null || acceptOrds.get(friendOrd)) {
             if (results.collect(friendOrd, friendSimilarity)) {
               minAcceptedSimilarity = results.minCompetitiveSimilarity();
             }
           }
         }
+
+        if (candidates.size() > 0 && (double) numDiff / candidates.size() < 0.0001) {
+          countSaturate++;
+        } else {
+          countSaturate = 0;
+        }
+
+        if (countSaturate >= maxNoSaturated) {
+          patienceFinished = true;
+        }
+        maxNoSaturated = (int) Math.max(candidates.size() / 1.5, 10);
       }
     }
   }
