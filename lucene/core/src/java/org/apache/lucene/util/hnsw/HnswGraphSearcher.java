@@ -236,8 +236,6 @@ public class HnswGraphSearcher {
       graphSeek(graph, level, topCandidateNode);
       int friendOrd;
 
-      // conta ogni volta quanti ne aggiungi rispetto a quelli iniziali e vedi quant'è la percentuale di aggiunti
-      // rispetto al numero di candidati iniziale
       while ((friendOrd = graphNextNeighbor(graph)) != NO_MORE_DOCS && !patienceFinished) {
         numDiff = 0;
         assert friendOrd < size : "friendOrd=" + friendOrd + "; size=" + size;
