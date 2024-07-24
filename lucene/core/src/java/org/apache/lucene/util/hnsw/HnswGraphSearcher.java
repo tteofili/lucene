@@ -36,6 +36,8 @@ import org.apache.lucene.util.SparseFixedBitSet;
  * search algorithm, see {@link HnswGraph}.
  */
 public class HnswGraphSearcher {
+  private static final double saturationPercentage = 0.0001;
+
   /**
    * Scratch data structures that are used in each {@link #searchLevel} call. These can be expensive
    * to allocate, so they're cleared and reused across calls.
@@ -218,14 +220,23 @@ public class HnswGraphSearcher {
 
     // A bound that holds the minimum similarity to the query vector that a candidate vector must
     // have to be considered.
-    int maxNoSaturated = (int) Math.max(candidates.size() / 1.5, 10);
-
-    int numDiff = 0;
-    int countSaturate = 0;
     float minAcceptedSimilarity = results.minCompetitiveSimilarity();
-    boolean patienceFinished = false;
 
-    while (candidates.size() > 0 && results.earlyTerminated() == false) {
+    // settings for local node neighbors patience
+    int maxNoSaturated = getMaxNoSaturated();
+    int numDiffLocal;
+    int countSaturateLocalNeighbor = 0;
+    boolean patienceLocalNeighborsFinished = false;
+
+    // settings for global candidate visiting patience
+    boolean patienceCandidatesFinished = false;
+    double prevSize;
+    double curSize;
+    int countSaturateCandidateGlobal = 0;
+
+    while (candidates.size() > 0 && results.earlyTerminated() == false && !patienceCandidatesFinished) {
+      prevSize = candidates.size();
+
       // get the best candidate (closest or best scoring)
       float topCandidateSimilarity = candidates.topScore();
       if (topCandidateSimilarity < minAcceptedSimilarity) {
@@ -236,8 +247,8 @@ public class HnswGraphSearcher {
       graphSeek(graph, level, topCandidateNode);
       int friendOrd;
 
-      while ((friendOrd = graphNextNeighbor(graph)) != NO_MORE_DOCS && !patienceFinished) {
-        numDiff = 0;
+      while ((friendOrd = graphNextNeighbor(graph)) != NO_MORE_DOCS && !patienceLocalNeighborsFinished) {
+        numDiffLocal = 0;
         assert friendOrd < size : "friendOrd=" + friendOrd + "; size=" + size;
         if (visited.getAndSet(friendOrd)) {
           continue;
@@ -250,7 +261,7 @@ public class HnswGraphSearcher {
         results.incVisitedCount(1);
         if (friendSimilarity > minAcceptedSimilarity) {
           candidates.add(friendOrd, friendSimilarity);
-          numDiff += 1;
+          numDiffLocal += 1;
           if (acceptOrds == null || acceptOrds.get(friendOrd)) {
             if (results.collect(friendOrd, friendSimilarity)) {
               minAcceptedSimilarity = results.minCompetitiveSimilarity();
@@ -258,18 +269,39 @@ public class HnswGraphSearcher {
           }
         }
 
-        if (candidates.size() > 0 && (double) numDiff / candidates.size() < 0.0001) {
-          countSaturate++;
+        // local checks
+        if (candidates.size() > 0 && (double) numDiffLocal / candidates.size() < saturationPercentage) {
+          countSaturateLocalNeighbor++;
         } else {
-          countSaturate = 0;
+          countSaturateLocalNeighbor = 0;
         }
 
-        if (countSaturate >= maxNoSaturated) {
-          patienceFinished = true;
+        if (countSaturateLocalNeighbor >= maxNoSaturated) {
+          patienceLocalNeighborsFinished = true;
         }
-        maxNoSaturated = (int) Math.max(candidates.size() / 1.5, 10);
+        maxNoSaturated = getMaxNoSaturated();
+      }
+      // reset local counters
+      countSaturateLocalNeighbor = 0;
+      patienceLocalNeighborsFinished = false;
+
+      // global checks
+      curSize = candidates.size();
+      double percAdded = (curSize - prevSize) / curSize;
+
+      if (candidates.size() > 0 && percAdded < 0.0001) {
+        countSaturateCandidateGlobal++;
+      } else {
+        countSaturateCandidateGlobal = 0;
+      }
+      if (countSaturateCandidateGlobal >= maxNoSaturated) {
+        patienceCandidatesFinished = true;
       }
     }
+  }
+
+  private int getMaxNoSaturated() {
+    return Math.max(candidates.size() / 3, 7);
   }
 
   private void prepareScratchState(int capacity) {
