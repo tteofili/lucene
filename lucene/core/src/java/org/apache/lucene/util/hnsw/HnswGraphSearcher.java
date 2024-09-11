@@ -20,6 +20,7 @@ package org.apache.lucene.util.hnsw;
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 
 import java.io.IOException;
+
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.search.TopKnnCollector;
 import org.apache.lucene.util.BitSet;
@@ -215,7 +216,16 @@ public class HnswGraphSearcher {
     // A bound that holds the minimum similarity to the query vector that a candidate vector must
     // have to be considered.
     float minAcceptedSimilarity = results.minCompetitiveSimilarity();
-    while (candidates.size() > 0 && results.earlyTerminated() == false) {
+
+    // calculate at each iteration the intersection in percentage between previous and current result set
+    int globalPrevSize = 0;
+    int globalCurrSize = 0;
+    int notMuchAdded = 0;
+    int k = results.k();
+    boolean globalPatienceFinished = false;
+    int globalThreshold = 30;
+    int saturationThreshold = 100;
+    while (candidates.size() > 0 && results.earlyTerminated() == false && !globalPatienceFinished) {
       // get the best candidate (closest or best scoring)
       float topCandidateSimilarity = candidates.topScore();
       if (topCandidateSimilarity < minAcceptedSimilarity) {
@@ -240,10 +250,22 @@ public class HnswGraphSearcher {
           candidates.add(friendOrd, friendSimilarity);
           if (acceptOrds == null || acceptOrds.get(friendOrd)) {
             if (results.collect(friendOrd, friendSimilarity)) {
+              globalCurrSize++;
               minAcceptedSimilarity = results.minCompetitiveSimilarity();
             }
           }
         }
+      }
+
+      int phiCurrent = 100 * Math.min(globalCurrSize, globalPrevSize) / k;
+      globalPrevSize = globalCurrSize;
+      if (phiCurrent > saturationThreshold) {
+        notMuchAdded++;
+      } else {
+        notMuchAdded = 0;
+      }
+      if (notMuchAdded > globalThreshold) {
+        globalPatienceFinished = true;
       }
     }
   }
