@@ -220,11 +220,11 @@ public class HnswGraphSearcher {
     // calculate at each iteration the intersection in percentage between previous and current result set
     int globalPrevSize = 0;
     int globalCurrSize = 0;
-    int notMuchAdded = 0;
+    int countSaturated = 0;
     int k = results.k();
     boolean globalPatienceFinished = false;
-    int globalThreshold = 30;
-    int saturationThreshold = 100;
+    int patience = (int) Math.max((double) k / 2, candidates.size() * 0.75);
+    double saturationThreshold = 95;
     while (candidates.size() > 0 && results.earlyTerminated() == false && !globalPatienceFinished) {
       // get the best candidate (closest or best scoring)
       float topCandidateSimilarity = candidates.topScore();
@@ -257,14 +257,14 @@ public class HnswGraphSearcher {
         }
       }
 
-      int phiCurrent = 100 * Math.min(globalCurrSize, globalPrevSize) / k;
+      double phiCurrent = 100d * Math.min(globalCurrSize, globalPrevSize) / k;
       globalPrevSize = globalCurrSize;
       if (phiCurrent > saturationThreshold) {
-        notMuchAdded++;
+        countSaturated++;
       } else {
-        notMuchAdded = 0;
+        countSaturated = 0;
       }
-      if (notMuchAdded > globalThreshold) {
+      if (countSaturated > patience) {
         globalPatienceFinished = true;
       }
     }
