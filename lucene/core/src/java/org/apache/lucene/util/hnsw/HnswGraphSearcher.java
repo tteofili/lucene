@@ -223,7 +223,7 @@ public class HnswGraphSearcher {
     int countSaturated = 0;
     int k = results.k();
     boolean globalPatienceFinished = false;
-    int patience = (int) Math.max((double) k / 2, candidates.size() * 0.75);
+    int patience = (int) Math.max((double) k / 2, 7);
     double saturationThreshold = 95;
     while (candidates.size() > 0 && results.earlyTerminated() == false && !globalPatienceFinished) {
       // get the best candidate (closest or best scoring)
