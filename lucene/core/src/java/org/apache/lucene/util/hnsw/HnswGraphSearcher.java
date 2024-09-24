@@ -215,7 +215,15 @@ public class HnswGraphSearcher {
     // A bound that holds the minimum similarity to the query vector that a candidate vector must
     // have to be considered.
     float minAcceptedSimilarity = results.minCompetitiveSimilarity();
-    while (candidates.size() > 0 && results.earlyTerminated() == false) {
+
+    int globalPrevSize = 0;
+    int globalCurrSize = 0;
+    int countSaturated = 0;
+    int k = results.k();
+    boolean globalPatienceFinished = false;
+    int patience = (int) Math.max((double) k / 3, 7);
+    double saturationThreshold = 95;
+    while (candidates.size() > 0 && results.earlyTerminated() == false && !globalPatienceFinished) {
       // get the best candidate (closest or best scoring)
       float topCandidateSimilarity = candidates.topScore();
       if (topCandidateSimilarity < minAcceptedSimilarity) {
@@ -240,10 +248,21 @@ public class HnswGraphSearcher {
           candidates.add(friendOrd, friendSimilarity);
           if (acceptOrds == null || acceptOrds.get(friendOrd)) {
             if (results.collect(friendOrd, friendSimilarity)) {
+              globalCurrSize++;
               minAcceptedSimilarity = results.minCompetitiveSimilarity();
             }
           }
         }
+      }
+      double phiCurrent = 100d * Math.min(globalCurrSize, globalPrevSize) / k;
+      globalPrevSize = globalCurrSize;
+      if (phiCurrent > saturationThreshold) {
+        countSaturated++;
+      } else {
+        countSaturated = 0;
+      }
+      if (countSaturated > patience) {
+        globalPatienceFinished = true;
       }
     }
   }
