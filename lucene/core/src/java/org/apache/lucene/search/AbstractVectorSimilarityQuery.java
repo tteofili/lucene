@@ -62,7 +62,7 @@ abstract class AbstractVectorSimilarityQuery extends Query {
 
   protected KnnCollectorManager getKnnCollectorManager() {
     return (visitedLimit, context) ->
-        new VectorSimilarityCollector(traversalSimilarity, resultSimilarity, visitedLimit);
+        new CandidateSaturatingKnnCollector(new VectorSimilarityCollector(traversalSimilarity, resultSimilarity, visitedLimit));
   }
 
   abstract VectorScorer createVectorScorer(LeafReaderContext context) throws IOException;
