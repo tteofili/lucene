@@ -28,7 +28,7 @@ import org.apache.lucene.util.BitSet;
  *
  * @lucene.experimental
  */
-public final class InitializedHnswGraphBuilder extends HnswGraphBuilder {
+public final class InitializedHnswGraphBuilder extends HnswPlusGraphBuilder {
 
   /**
    * Create a new HnswGraphBuilder that is initialized with the provided HnswGraph.

@@ -112,14 +112,14 @@ public class IncrementalHnswGraphMerger implements HnswGraphMerger {
   protected HnswBuilder createBuilder(KnnVectorValues mergedVectorValues, int maxOrd)
       throws IOException {
     if (initReader == null) {
-      return HnswGraphBuilder.create(
-          scorerSupplier, M, beamWidth, HnswGraphBuilder.randSeed, maxOrd);
+      return HnswPlusGraphBuilder.create(
+          scorerSupplier, M, beamWidth, HnswPlusGraphBuilder.randSeed, maxOrd);
     }
 
     HnswGraph initializerGraph = ((HnswGraphProvider) initReader).getGraph(fieldInfo.name);
     if (initializerGraph.size() == 0) {
-      return HnswGraphBuilder.create(
-          scorerSupplier, M, beamWidth, HnswGraphBuilder.randSeed, maxOrd);
+      return HnswPlusGraphBuilder.create(
+          scorerSupplier, M, beamWidth, HnswPlusGraphBuilder.randSeed, maxOrd);
     }
 
     BitSet initializedNodes = new FixedBitSet(maxOrd);
@@ -127,7 +127,7 @@ public class IncrementalHnswGraphMerger implements HnswGraphMerger {
     return InitializedHnswGraphBuilder.fromGraph(
         scorerSupplier,
         beamWidth,
-        HnswGraphBuilder.randSeed,
+            HnswPlusGraphBuilder.randSeed,
         initializerGraph,
         oldToNewOrdinalMap,
         initializedNodes,

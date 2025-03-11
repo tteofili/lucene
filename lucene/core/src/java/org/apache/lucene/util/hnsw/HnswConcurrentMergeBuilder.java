@@ -62,7 +62,7 @@ public class HnswConcurrentMergeBuilder implements HnswBuilder {
           new ConcurrentMergeWorker(
               scorerSupplier.copy(),
               beamWidth,
-              HnswGraphBuilder.randSeed,
+                  HnswPlusGraphBuilder.randSeed,
               hnsw,
               hnswLock,
               initializedNodes,
@@ -132,7 +132,7 @@ public class HnswConcurrentMergeBuilder implements HnswBuilder {
     }
   }
 
-  private static final class ConcurrentMergeWorker extends HnswGraphBuilder {
+  private static final class ConcurrentMergeWorker extends HnswPlusGraphBuilder {
 
     /**
      * A common AtomicInteger shared among all workers, used for tracking what's the next vector to

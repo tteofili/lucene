@@ -47,17 +47,8 @@ import org.apache.lucene.store.IndexOutput;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.InfoStream;
 import org.apache.lucene.util.RamUsageEstimator;
-import org.apache.lucene.util.hnsw.CloseableRandomVectorScorerSupplier;
-import org.apache.lucene.util.hnsw.ConcurrentHnswMerger;
-import org.apache.lucene.util.hnsw.HnswGraph;
+import org.apache.lucene.util.hnsw.*;
 import org.apache.lucene.util.hnsw.HnswGraph.NodesIterator;
-import org.apache.lucene.util.hnsw.HnswGraphBuilder;
-import org.apache.lucene.util.hnsw.HnswGraphMerger;
-import org.apache.lucene.util.hnsw.IncrementalHnswGraphMerger;
-import org.apache.lucene.util.hnsw.NeighborArray;
-import org.apache.lucene.util.hnsw.OnHeapHnswGraph;
-import org.apache.lucene.util.hnsw.RandomVectorScorerSupplier;
-import org.apache.lucene.util.hnsw.UpdateableRandomVectorScorer;
 import org.apache.lucene.util.packed.DirectMonotonicWriter;
 
 /**
@@ -563,7 +554,7 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
         RamUsageEstimator.shallowSizeOfInstance(FieldWriter.class);
 
     private final FieldInfo fieldInfo;
-    private final HnswGraphBuilder hnswGraphBuilder;
+    private final HnswPlusGraphBuilder hnswGraphBuilder;
     private int lastDocID = -1;
     private int node = 0;
     private final FlatFieldVectorsWriter<T> flatFieldVectorsWriter;
@@ -625,7 +616,7 @@ public final class Lucene99HnswVectorsWriter extends KnnVectorsWriter {
           };
       this.scorer = scorerSupplier.scorer();
       hnswGraphBuilder =
-          HnswGraphBuilder.create(scorerSupplier, M, beamWidth, HnswGraphBuilder.randSeed);
+              HnswPlusGraphBuilder.create(scorerSupplier, M, beamWidth, HnswPlusGraphBuilder.randSeed);
       hnswGraphBuilder.setInfoStream(infoStream);
       this.flatFieldVectorsWriter = Objects.requireNonNull(flatFieldVectorsWriter);
     }

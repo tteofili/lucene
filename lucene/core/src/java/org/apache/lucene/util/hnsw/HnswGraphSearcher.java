@@ -168,12 +168,12 @@ public class HnswGraphSearcher extends AbstractHnswGraphSearcher {
    * @param graph the graph values
    * @return a set of collected vectors holding the nearest neighbors found
    */
-  public HnswGraphBuilder.GraphBuilderKnnCollector searchLevel(
+  public HnswPlusGraphBuilder.GraphBuilderKnnCollector searchLevel(
       // Note: this is only public because Lucene91HnswGraphBuilder needs it
       RandomVectorScorer scorer, int topK, int level, final int[] eps, HnswGraph graph)
       throws IOException {
-    HnswGraphBuilder.GraphBuilderKnnCollector results =
-        new HnswGraphBuilder.GraphBuilderKnnCollector(topK);
+    HnswPlusGraphBuilder.GraphBuilderKnnCollector results =
+        new HnswPlusGraphBuilder.GraphBuilderKnnCollector(topK);
     searchLevel(results, scorer, level, eps, graph, null);
     return results;
   }
@@ -191,42 +191,110 @@ public class HnswGraphSearcher extends AbstractHnswGraphSearcher {
   @Override
   int[] findBestEntryPoint(RandomVectorScorer scorer, HnswGraph graph, KnnCollector collector)
       throws IOException {
-    int currentEp = graph.entryNode();
-    if (currentEp == -1 || graph.numLevels() == 1) {
-      return new int[] {currentEp};
+    int graphEntry = graph.entryNode();
+    if (graphEntry == -1 || graph.numLevels() == 1) {
+      return new int[] {graphEntry};
     }
     int size = getGraphSize(graph);
     prepareScratchState(size);
-    float currentScore = scorer.score(currentEp);
+
+    // we pick two entry points from a minmax-ed set of vectors of the first layer, or via quick k-means
+    // we should pick a list of such "centroids" already pre-computed, but we do it on the fly for now
+
+    // we pick 3 entry points in the first layer, the closest, the farthest and the densest scored vectors
+    int topLayer = graph.numLevels() - 1;
+    int[] entryPoints = getDiverseEps(scorer, graph, topLayer, graphEntry);
     collector.incVisitedCount(1);
-    boolean foundBetter;
+    int currentEp = graphEntry;
     for (int level = graph.numLevels() - 1; level >= 1; level--) {
-      foundBetter = true;
-      visited.set(currentEp);
-      // Keep searching the given level until we stop finding a better candidate entry point
-      while (foundBetter) {
-        foundBetter = false;
-        graphSeek(graph, level, currentEp);
-        int friendOrd;
-        while ((friendOrd = graphNextNeighbor(graph)) != NO_MORE_DOCS) {
-          assert friendOrd < size : "friendOrd=" + friendOrd + "; size=" + size;
-          if (visited.getAndSet(friendOrd)) {
-            continue;
-          }
-          if (collector.earlyTerminated()) {
+      if (level == graph.numLevels() - 1) {
+        float bestScore = Float.MIN_VALUE;
+        for (int cep : entryPoints) {
+          float score = findBestEntry(cep, scorer, graph, collector, level, size);
+          if (Float.isNaN(score)) {
             return new int[] {UNK_EP};
           }
-          float friendSimilarity = scorer.score(friendOrd);
-          collector.incVisitedCount(1);
-          if (friendSimilarity > currentScore) {
-            currentScore = friendSimilarity;
-            currentEp = friendOrd;
-            foundBetter = true;
+          if (score > bestScore) {
+            bestScore = score;
+            currentEp = cep;
           }
+        }
+      } else {
+        float score = findBestEntry(currentEp, scorer, graph, collector, level, size);
+        if (Float.isNaN(score)) {
+          return new int[] {UNK_EP};
         }
       }
     }
     return collector.earlyTerminated() ? new int[] {UNK_EP} : new int[] {currentEp};
+  }
+
+  private static int[] getDiverseEps(RandomVectorScorer scorer, HnswGraph graph, int givenLevel, int graphEntry) throws IOException {
+    HnswGraph.NodesIterator nodesOnLevel = graph.getNodesOnLevel(givenLevel);
+    float minScore = Float.MAX_VALUE;
+    int minNode = -1;
+    float maxScore = Float.MIN_VALUE;
+    int maxNode = -1;
+    float emaDiff = Float.MAX_VALUE;
+    int meanNode = graphEntry;
+    float alpha = 1e-1f;
+    float ema = Float.NaN;
+
+    while (nodesOnLevel.hasNext()) {
+      Integer node = nodesOnLevel.next();
+      float score = scorer.score(node);
+
+      if (score < minScore) {
+        minNode = node;
+        minScore = score;
+      }
+      if (score > maxScore) {
+        maxNode = node;
+        maxScore = score;
+      }
+      if (Float.isNaN(ema)) {
+        ema = score;
+      } else {
+        float diff = Math.abs(score - ema);
+        if (diff < emaDiff) {
+          meanNode = node;
+          emaDiff = diff;
+        }
+        ema = alpha * score + (1 - alpha) * ema;
+      }
+    }
+
+    return new int[]{minNode, maxNode, meanNode};
+  }
+
+  private float findBestEntry(int currentEp, RandomVectorScorer scorer, HnswGraph graph, KnnCollector collector, int level, int size) throws IOException {
+    boolean foundBetter;
+    foundBetter = true;
+    float currentScore = scorer.score(currentEp);
+    visited.set(currentEp);
+    // Keep searching the given level until we stop finding a better candidate entry point
+    while (foundBetter) {
+      foundBetter = false;
+      graphSeek(graph, level, currentEp);
+      int friendOrd;
+      while ((friendOrd = graphNextNeighbor(graph)) != NO_MORE_DOCS) {
+        assert friendOrd < size : "friendOrd=" + friendOrd + "; size=" + size;
+        if (visited.getAndSet(friendOrd)) {
+          continue;
+        }
+        if (collector.earlyTerminated()) {
+          return Float.NaN;
+        }
+        float friendSimilarity = scorer.score(friendOrd);
+        collector.incVisitedCount(1);
+        if (friendSimilarity > currentScore) {
+          currentScore = friendSimilarity;
+          currentEp = friendOrd;
+          foundBetter = true;
+        }
+      }
+    }
+    return currentScore;
   }
 
   /**

@@ -157,4 +157,20 @@ public abstract class KnnSearchStrategy {
       return Objects.hash(entryPoints, numberOfEntryPoints, originalStrategy);
     }
   }
+
+  /**
+   * LID stuff
+   */
+  public static class LID extends KnnSearchStrategy {
+
+    @Override
+    public boolean equals(Object obj) {
+      return false;
+    }
+
+    @Override
+    public int hashCode() {
+      return 0;
+    }
+  }
 }

@@ -29,11 +29,7 @@ import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.InfoStream;
-import org.apache.lucene.util.hnsw.HnswGraph;
-import org.apache.lucene.util.hnsw.HnswGraphBuilder;
-import org.apache.lucene.util.hnsw.HnswGraphSearcher;
-import org.apache.lucene.util.hnsw.NeighborQueue;
-import org.apache.lucene.util.hnsw.RandomVectorScorer;
+import org.apache.lucene.util.hnsw.*;
 
 /**
  * Builder for HNSW graph. See {@link HnswGraph} for a gloss on the algorithm and the meaning of the
@@ -149,7 +145,7 @@ public final class Lucene91HnswGraphBuilder {
   void addGraphNode(int node, float[] value) throws IOException {
     RandomVectorScorer scorer =
         defaultFlatVectorScorer.getRandomVectorScorer(similarityFunction, vectorValues, value);
-    HnswGraphBuilder.GraphBuilderKnnCollector candidates;
+    HnswPlusGraphBuilder.GraphBuilderKnnCollector candidates;
     final int nodeLevel = getRandomGraphLevel(ml, random);
     int curMaxLevel = hnsw.numLevels() - 1;
     int[] eps = new int[] {hnsw.entryNode()};
@@ -192,7 +188,7 @@ public final class Lucene91HnswGraphBuilder {
    * But first we should just see if sorting makes a significant difference.
    */
   private void addDiverseNeighbors(
-      int level, int node, HnswGraphBuilder.GraphBuilderKnnCollector candidates)
+      int level, int node, HnswPlusGraphBuilder.GraphBuilderKnnCollector candidates)
       throws IOException {
     /* For each of the beamWidth nearest candidates (going from best to worst), select it only if it
      * is closer to target than it is to any of the already-selected neighbors (ie selected in this method,
@@ -231,7 +227,7 @@ public final class Lucene91HnswGraphBuilder {
     }
   }
 
-  private void popToScratch(HnswGraphBuilder.GraphBuilderKnnCollector candidates) {
+  private void popToScratch(HnswPlusGraphBuilder.GraphBuilderKnnCollector candidates) {
     scratch.clear();
     int candidateCount = candidates.size();
     // extract all the Neighbors from the queue into an array; these will now be
