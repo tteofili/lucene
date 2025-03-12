@@ -21,18 +21,19 @@ import static java.lang.Math.log;
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 
 import java.io.IOException;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Locale;
-import java.util.Objects;
-import java.util.SplittableRandom;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
+
+import org.apache.lucene.analysis.CharArrayMap;
+import org.apache.lucene.index.FloatVectorValues;
 import org.apache.lucene.search.KnnCollector;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.knn.KnnSearchStrategy;
+import org.apache.lucene.util.ArrayUtil;
 import org.apache.lucene.util.FixedBitSet;
 import org.apache.lucene.util.InfoStream;
+import org.apache.lucene.util.VectorUtil;
 import org.apache.lucene.util.hnsw.HnswUtil.Component;
 
 /**
@@ -74,6 +75,9 @@ public class HnswGraphBuilder implements HnswBuilder {
 
   private InfoStream infoStream = InfoStream.getDefault();
   private boolean frozen;
+
+  private final Map<Integer, StreamingKmeans> perLayerCentroids = new HashMap<>();
+  private Map<Integer, Double> lidValues = new HashMap<>();
 
   public static HnswGraphBuilder create(
       RandomVectorScorerSupplier scorerSupplier, int M, int beamWidth, long seed)
@@ -229,7 +233,7 @@ public class HnswGraphBuilder implements HnswBuilder {
       curMaxLevel = hnsw.numLevels() - 1;
       // NOTE: the entry node and max level may not be paired, but because we get the level first
       // we ensure that the entry node we get later will always exist on the curMaxLevel
-      int[] eps = new int[] {hnsw.entryNode()};
+      int[] eps = new int[] {hnsw.entryNode()}; // int[] eps = nearestNodeToNearestCentroid(curMaxLevel, node, scorer);
 
       // we first do the search from top to bottom
       // for levels > nodeLevel search with topk = 1
@@ -237,7 +241,24 @@ public class HnswGraphBuilder implements HnswBuilder {
       for (int level = curMaxLevel; level > nodeLevel; level--) {
         candidates.clear();
         graphSearcher.searchLevel(candidates, scorer, level, eps, hnsw, null);
-        eps[0] = candidates.popNode();
+        eps = nearestNodeToNearestCentroid(level, candidates.popNode(), scorer);
+      }
+
+      int efConstruction = M;
+
+      double lid;
+      if (!lidValues.containsKey(node)) {
+        // compute LID over its neighbors
+        HnswGraphBuilder.GraphBuilderKnnCollector lidNeighbors = graphSearcher.searchLevel(scorer, (int) Math.sqrt(hnsw.size()), nodeLevel, eps, hnsw);
+        lid = computeLID(node, lidNeighbors.popUntilNearestKNodes());
+        lidValues.put(node, lid);
+      } else {
+        lid = lidValues.get(node);
+      }
+
+      // Prioritize high-LID nodes
+      if (lid > 20) {
+        efConstruction = (int) (efConstruction * 1.5);  // Increase ef for high-LID nodes
       }
 
       // for levels <= nodeLevel search with topk = beamWidth, and add connections
@@ -249,7 +270,7 @@ public class HnswGraphBuilder implements HnswBuilder {
         candidates.clear();
         graphSearcher.searchLevel(candidates, scorer, level, eps, hnsw, null);
         eps = candidates.popUntilNearestKNodes();
-        scratchPerLevel[i] = new NeighborArray(Math.max(beamCandidates.k(), M + 1), false);
+        scratchPerLevel[i] = new NeighborArray(Math.max(beamCandidates.k(), efConstruction + 1), false);
         popToScratch(candidates, scratchPerLevel[i]);
       }
 
@@ -619,4 +640,178 @@ public class HnswGraphBuilder implements HnswBuilder {
       throw new IllegalArgumentException("Should not use unique strategy during graph building");
     }
   }
+
+  private static final class StreamingKmeans {
+    private final int numClusters;
+    private final double initialLearningRate;
+    private final double decay;
+    //private final double increaseFactor;
+    //private final double driftThreshold;
+    private final UpdateableRandomVectorScorer scorer;
+    private final FloatVectorValues vectorValues;
+
+    private float[][] centroids = null;
+    private float[] closestDist = null;
+    private int[] closestNodes = null;
+    //private float[][] prevCentroids;
+    private int updateCount;
+
+    private StreamingKmeans(int numClusters, double initialLearningRate, double decay,
+                            UpdateableRandomVectorScorer scorer, FloatVectorValues vectorValues) {
+      this.numClusters = numClusters;
+      this.initialLearningRate = initialLearningRate;
+      this.decay = decay;
+      this.scorer = scorer;
+      this.vectorValues = vectorValues;
+    }
+
+    void initCentroids(int node) throws IOException {
+      initializeSame(node);
+    }
+
+    private void initializeSame(int node) throws IOException {
+      centroids = new float[numClusters][];
+      closestDist = new float[numClusters];
+      closestNodes = new int[numClusters];
+      float[] vector = vectorValues.vectorValue(node);
+      for (int i = 0; i < numClusters; i++) {
+        closestNodes[i] = node;
+        closestDist[i] = Float.POSITIVE_INFINITY;
+        float[] newCentroid = new float[vector.length];
+        System.arraycopy(vector, 0, newCentroid, 0, vector.length);
+        centroids[i] = newCentroid;
+      }
+    }
+
+    private void initializeForgy() throws IOException {
+      Set<Integer> selection = new HashSet<>();
+      while (selection.size() < numClusters) {
+        selection.add(new Random().nextInt(vectorValues.size()));
+      }
+      centroids = new float[numClusters][];
+      closestDist = new float[numClusters];
+      closestNodes = new int[numClusters];
+      int i = 0;
+      for (Integer selectedIdx : selection) {
+        float[] vector = vectorValues.vectorValue(selectedIdx);
+        closestNodes[i] = selectedIdx;
+        closestDist[i] = Float.POSITIVE_INFINITY;
+        centroids[i++] = ArrayUtil.copyOfSubArray(vector, 0, vector.length);
+      }
+    }
+
+    private static int[] argmin(float[] array, int count) {
+      int[] indexes = new int[count];
+      int minIndex = 0;
+      float previousMin = Float.MAX_VALUE;
+      float min = Float.POSITIVE_INFINITY;
+      for (int c = 0; c < count; c++) {
+        for (int i = 1; i < array.length; i++) {
+          if (array[i] < array[minIndex] && array[i] > previousMin) {
+            minIndex = i;
+            min = array[i];
+          }
+        }
+        indexes[c] = minIndex;
+        previousMin = min;
+      }
+      return indexes;
+    }
+
+        /*
+        boolean detectDrift() {
+            // Detect significant centroid movement (concept drift).
+            // If the average movement of centroids exceeds the threshold, return True.
+            double movement = np.linalg.norm(self.centroids - self.prev_centroids, axis = 1).mean()
+            return movement > driftThreshold;
+        }
+         */
+
+    /*
+    Update centroids given a new data point.
+    The closest centroid is updated incrementally using a dynamically adaptive learning rate.
+    */
+    int[] update(int node) throws IOException {
+      float[] nodeVector = vectorValues.vectorValue(node);
+      if (closestNodes == null) {
+        //Initialize centroids if they haven't been set
+        initCentroids(node);
+        //initializeForgy();
+      }
+
+      // Compute distances between the new point and all centroids
+      float[] distances = new float[centroids.length];
+      for (int i = 0; i < centroids.length; i++) {
+        float[] centroid = centroids[i];
+        distances[i] = VectorUtil.squareDistance(centroid, nodeVector);
+      }
+
+      // Identify the closest centroid index
+      int[] closestIndexes = argmin(distances, 2);
+      for (int closestIndex : closestIndexes) {
+        if (distances[closestIndex] < closestDist[closestIndex]) {
+          closestDist[closestIndex] = distances[closestIndex];
+          closestNodes[closestIndex] = node;
+        }
+
+        // Compute adaptive learning rate with decay
+        double adaptiveLearningRate = initialLearningRate / (1 + decay * updateCount);
+
+        // Detect concept drift and increase learning rate if necessary
+            /*
+            if (detectDrift()) {
+                adaptiveLearningRate *= increaseFactor;  // Increase learning rate dynamically
+            }
+             */
+
+        // Update the closest centroid using the adaptive learning rate
+        for (int i = 0; i < nodeVector.length; i++) {
+          centroids[closestIndex][i] += (float) (adaptiveLearningRate * (nodeVector[i] - centroids[closestIndex][i]));
+        }
+      }
+
+      // Update previous centroids for drift detection
+      //System.arraycopy(centroids, 0, prevCentroids, 0, centroids.length);
+
+      // Increment update counter
+      updateCount++;
+
+      // note that this is approximate: one node might have been selected as the closest node, but then afterwards
+      // the centroids moved enough to make that not the best entry anymore
+      return Arrays.stream(closestIndexes).distinct().map(i -> closestNodes[i]).toArray();
+    }
+  }
+
+  private int[] nearestNodeToNearestCentroid(int layer, int node, UpdateableRandomVectorScorer scorer) throws IOException {
+    StreamingKmeans layerCentroids;
+    if (perLayerCentroids.containsKey(layer)) {
+      layerCentroids = perLayerCentroids.get(layer);
+    } else {
+      int numClusters = (int) Math.max(4, Math.sqrt((double) hnsw.size() / (1 + layer)));
+      double learningRate = 0.1d;
+      double decay = 0.001d;
+      FloatVectorValues vectorValues = (FloatVectorValues) ((UpdateableRandomVectorScorer.AbstractUpdateableRandomVectorScorer) scorer).getValues();
+      layerCentroids = new StreamingKmeans(numClusters, learningRate, decay, scorer, vectorValues);
+      perLayerCentroids.put(layer, layerCentroids);
+    }
+    return layerCentroids.update(node);
+  }
+
+  private double computeLID(int node, int... neighbors) throws IOException {
+    double[] distances = new double[neighbors.length];
+    UpdateableRandomVectorScorer scorer = scorerSupplier.scorer();
+    scorer.setScoringOrdinal(node);
+    for (int i = 0; i < neighbors.length; i++) {
+      distances[i] = scorer.score(neighbors[i]);
+    }
+    double minDist = Arrays.stream(distances).min().orElse(1e-10);
+    double sumLogRatios = 0.0;
+
+    for (double dist : distances) {
+      sumLogRatios += Math.log(dist / minDist);
+    }
+
+    return -1.0 / (sumLogRatios / distances.length);
+  }
+
 }

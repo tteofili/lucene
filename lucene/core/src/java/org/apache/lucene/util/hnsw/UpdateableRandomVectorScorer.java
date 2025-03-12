@@ -63,5 +63,9 @@ public interface UpdateableRandomVectorScorer extends RandomVectorScorer {
     public Bits getAcceptOrds(Bits acceptDocs) {
       return values.getAcceptOrds(acceptDocs);
     }
+
+    public KnnVectorValues getValues() {
+      return values;
+    }
   }
 }
