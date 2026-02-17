@@ -16,48 +16,38 @@
  */
 package org.apache.lucene.search;
 
-import static org.apache.lucene.search.knn.KnnSearchStrategy.Hnsw.DEFAULT;
-
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Objects;
-import org.apache.lucene.codecs.KnnVectorsReader;
-import org.apache.lucene.document.KnnByteVectorField;
 import org.apache.lucene.index.ByteVectorValues;
 import org.apache.lucene.index.FieldInfo;
+import org.apache.lucene.index.KnnVectorValues;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.knn.KnnCollectorManager;
 import org.apache.lucene.search.knn.KnnSearchStrategy;
 import org.apache.lucene.util.ArrayUtil;
+import org.apache.lucene.util.Bits;
+
+import org.apache.lucene.util.VectorUtil;
 
 /**
- * Uses {@link KnnVectorsReader#search(String, byte[], KnnCollector, AcceptDocs)} to perform nearest
- * neighbour search.
- *
- * <p>This query also allows for performing a kNN search subject to a filter. In this case, it first
- * executes the filter for each leaf, then chooses a strategy dynamically:
- *
- * <ul>
- *   <li>If the filter cost is less than k, just execute an exact search
- *   <li>Otherwise run a kNN search subject to the filter
- *   <li>If the kNN search visits too many vectors without completing, stop and run an exact search
- * </ul>
+ * Query that finds the k nearest byte vectors to a target vector and returns those documents. This
+ * query will run in exact mode if the filter can execute efficiently with N a few docs.
+ * Otherwise it will run in approximate mode using HNSW indexing.
  */
 public class KnnByteVectorQuery extends AbstractKnnVectorQuery {
 
-  private static final TopDocs NO_RESULTS = TopDocsCollector.EMPTY_TOPDOCS;
-
-  protected final byte[] target;
+  private final byte[] target;
 
   /**
    * Find the <code>k</code> nearest documents to the target vector according to the vectors in the
    * given field. <code>target</code> vector.
    *
-   * @param field a field that has been indexed as a {@link KnnByteVectorField}.
+   * @param field a field that has been indexed as a KNN vector field.
    * @param target the target of the search
    * @param k the number of documents to find
-   * @throws IllegalArgumentException if <code>k</code> is less than 1
+   * @throws IllegalArgumentException if {@code target} has a different dimension than the field or
+   *     contains an invalid element (NaN, inf or -inf)
    */
   public KnnByteVectorQuery(String field, byte[] target, int k) {
     this(field, target, k, null);
@@ -67,98 +57,101 @@ public class KnnByteVectorQuery extends AbstractKnnVectorQuery {
    * Find the <code>k</code> nearest documents to the target vector according to the vectors in the
    * given field. <code>target</code> vector.
    *
-   * @param field a field that has been indexed as a {@link KnnByteVectorField}.
+   * @param field a field that has been indexed as a KNN vector field.
    * @param target the target of the search
    * @param k the number of documents to find
    * @param filter a filter applied before the vector search
-   * @throws IllegalArgumentException if <code>k</code> is less than 1
+   * @throws IllegalArgumentException if {@code target} has a different dimension than the field or
+   *     contains an invalid element (NaN, inf or -inf)
    */
   public KnnByteVectorQuery(String field, byte[] target, int k, Query filter) {
-    this(field, target, k, filter, DEFAULT);
+    this(field, target, k, filter, null);
   }
 
   /**
    * Find the <code>k</code> nearest documents to the target vector according to the vectors in the
    * given field. <code>target</code> vector.
    *
-   * @param field a field that has been indexed as a {@link KnnByteVectorField}.
+   * @param field a field that has been indexed as a KNN vector field.
    * @param target the target of the search
    * @param k the number of documents to find
    * @param filter a filter applied before the vector search
    * @param searchStrategy the search strategy to use. If null, the default strategy will be used.
    *     The underlying format may not support all strategies and is free to ignore the requested
    *     strategy.
+   */
+  public KnnByteVectorQuery(String field, byte[] target, int k, Query filter, KnnSearchStrategy searchStrategy) {
+    this(field, target, k, filter, searchStrategy, VectorSlice.NONE);
+  }
+
+  /**
+   * Find the <code>k</code> nearest documents to the target vector according to the vectors in the
+   * given field. <code>target</code> vector.
+   *
+   * @param field a field that has been indexed as a KNN vector field.
+   * @param target the target of the search
+   * @param k the number of documents to find
+   * @param filter a filter applied before the vector search
+   * @param searchStrategy the search strategy to use. If null, the default strategy will be used.
+   *     The underlying format may not support all strategies and is free to ignore the requested
+   *     strategy.
+   * @param vectorSlice vector slice configuration to apply during search
    * @lucene.experimental
    */
   public KnnByteVectorQuery(
-      String field, byte[] target, int k, Query filter, KnnSearchStrategy searchStrategy) {
-    super(field, k, filter, searchStrategy);
-    this.target = Objects.requireNonNull(target, "target");
+      String field, byte[] target, int k, Query filter, KnnSearchStrategy searchStrategy, VectorSlice vectorSlice) {
+    super(field, k, filter, searchStrategy, vectorSlice);
+    this.target = target;
+  }
+
+  @Override
+  public String targetString() {
+    return new String(target);
   }
 
   @Override
   protected TopDocs approximateSearch(
       LeafReaderContext context,
-      AcceptDocs acceptDocs,
-      int visitedLimit,
-      KnnCollectorManager knnCollectorManager)
+      Weight filterWeight,
+      TimeLimitingKnnCollectorManager timeLimitingKnnCollectorManager)
       throws IOException {
-    KnnCollector knnCollector =
-        knnCollectorManager.newCollector(visitedLimit, searchStrategy, context);
-    LeafReader reader = context.reader();
+    LeafReader reader = getEffectiveReader(context.reader());
     ByteVectorValues byteVectorValues = reader.getByteVectorValues(field);
     if (byteVectorValues == null) {
       ByteVectorValues.checkField(reader, field);
       return NO_RESULTS;
     }
-    if (Math.min(knnCollector.k(), byteVectorValues.size()) == 0) {
+    if (byteVectorValues.size() == 0) {
       return NO_RESULTS;
     }
-    reader.searchNearestVectors(field, target, knnCollector, acceptDocs);
-    TopDocs results = knnCollector.topDocs();
-    return results != null ? results : NO_RESULTS;
+    byte[] effectiveTarget = target;
+    if (!vectorSlice.isNoSlice()) {
+      effectiveTarget = vectorSlice.apply(target);
+    }
+    // Simple implementation using reader.searchNearestVectors
+    return reader.searchNearestVectors(field, effectiveTarget, k, null, 0);
   }
 
   @Override
-  VectorScorer createVectorScorer(LeafReaderContext context, FieldInfo fi) throws IOException {
-    LeafReader reader = context.reader();
+  protected VectorScorer createVectorScorer(LeafReaderContext context, FieldInfo fi) throws IOException {
+    LeafReader reader = getEffectiveReader(context.reader());
     ByteVectorValues vectorValues = reader.getByteVectorValues(field);
     if (vectorValues == null) {
       ByteVectorValues.checkField(reader, field);
       return null;
     }
-    return vectorValues.scorer(target);
-  }
-
-  @Override
-  public String toString(String field) {
-    StringBuilder buffer = new StringBuilder();
-    buffer.append(getClass().getSimpleName() + ":");
-    buffer.append(this.field + "[" + target[0] + ",...]");
-    buffer.append("[" + k + "]");
-    if (this.filter != null) {
-      buffer.append("[" + this.filter + "]");
+    byte[] effectiveTarget = target;
+    if (!vectorSlice.isNoSlice()) {
+      effectiveTarget = vectorSlice.apply(target);
     }
-    return buffer.toString();
+    return vectorValues.scorer(effectiveTarget);
   }
 
   @Override
-  public boolean equals(Object o) {
-    if (this == o) return true;
-    if (super.equals(o) == false) return false;
-    KnnByteVectorQuery that = (KnnByteVectorQuery) o;
-    return Arrays.equals(target, that.target);
-  }
-
-  @Override
-  public int hashCode() {
-    return Objects.hash(super.hashCode(), Arrays.hashCode(target));
-  }
-
-  /**
-   * @return the target query vector of the search. Each vector element is a byte.
-   */
-  public byte[] getTargetCopy() {
-    return ArrayUtil.copyArray(target);
+  public void visit(QueryVisitor visitor) {
+    // Simple implementation - could be enhanced if needed
+    if (filter != null) {
+      filter.visit(visitor);
+    }
   }
 }

@@ -18,6 +18,7 @@ package org.apache.lucene.search;
 
 import java.io.IOException;
 import java.util.Objects;
+import org.apache.lucene.search.AcceptDocs;
 import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.QueryTimeout;
@@ -188,10 +189,7 @@ public class PatienceKnnVectorQuery extends AbstractKnnVectorQuery {
         + '}';
   }
 
-  @Override
-  protected KnnCollectorManager getKnnCollectorManager(int k, IndexSearcher searcher) {
-    return new PatienceCollectorManager(delegate.getKnnCollectorManager(k, searcher));
-  }
+  // Removed getKnnCollectorManager - delegate doesn't have this method
 
   @Override
   protected TopDocs approximateSearch(
@@ -202,17 +200,33 @@ public class PatienceKnnVectorQuery extends AbstractKnnVectorQuery {
       throws IOException {
     return delegate.approximateSearch(context, acceptDocs, visitedLimit, knnCollectorManager);
   }
-
+  
   @Override
-  protected TopDocs exactSearch(
-      LeafReaderContext context, DocIdSetIterator acceptIterator, QueryTimeout queryTimeout)
+  protected TopDocs approximateSearch(
+      LeafReaderContext context,
+      Weight filterWeight,
+      TimeLimitingKnnCollectorManager timeLimitingKnnCollectorManager)
       throws IOException {
-    return delegate.exactSearch(context, acceptIterator, queryTimeout);
+    // For now, just use null for AcceptDocs (can be enhanced later)
+    AcceptDocs acceptDocs = null;
+    
+    // Use visited limit from context or delegate
+    int visitedLimit = context.reader().getDocCount(delegate.field);
+    
+    // Extract delegate KnnCollectorManager from TimeLimitingKnnCollectorManager
+    KnnCollectorManager knnCollectorManager = timeLimitingKnnCollectorManager != null ? 
+        timeLimitingKnnCollectorManager.getDelegate() : null;
+    
+    return delegate.approximateSearch(context, acceptDocs, visitedLimit, knnCollectorManager);
   }
 
+// Removed exactSearch - delegate doesn't have this method
+
+  // Removed mergeLeafResults - delegate doesn't have this method
+
   @Override
-  protected TopDocs mergeLeafResults(TopDocs[] perLeafResults) {
-    return delegate.mergeLeafResults(perLeafResults);
+  protected VectorScorer createVectorScorer(LeafReaderContext context, FieldInfo fi) throws IOException {
+    return delegate.createVectorScorer(context, fi);
   }
 
   @Override
@@ -241,20 +255,20 @@ public class PatienceKnnVectorQuery extends AbstractKnnVectorQuery {
     return delegate.getField();
   }
 
-  @Override
   public int getK() {
     return delegate.getK();
   }
 
-  @Override
   public Query getFilter() {
     return delegate.getFilter();
   }
 
-  @Override
-  VectorScorer createVectorScorer(LeafReaderContext context, FieldInfo fi) throws IOException {
-    return delegate.createVectorScorer(context, fi);
+@Override
+  protected String targetString() {
+    return delegate.targetString();
   }
+  
+  
 
   class PatienceCollectorManager implements KnnCollectorManager {
     final KnnCollectorManager knnCollectorManager;

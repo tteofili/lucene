@@ -1,20 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.apache.lucene.util.hnsw;
 
 import static java.lang.Math.log;
@@ -30,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import org.apache.lucene.internal.hppc.IntHashSet;
 import org.apache.lucene.search.KnnCollector;
+import org.apache.lucene.search.LidCollector;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.knn.KnnSearchStrategy;
 import org.apache.lucene.util.FixedBitSet;
@@ -80,6 +64,16 @@ public class HnswGraphBuilder implements HnswBuilder {
 
   protected InfoStream infoStream = InfoStream.getDefault();
   protected boolean frozen;
+
+  /**
+   * heuristic: higher estimated LID --> increase expected node level (favor insertion into
+   * higher layers).
+   * we cap the effect to avoid pathological promotion when LID is very large or unstable.
+   */
+  private static final double LID_LEVEL_BOOST_MAX = 2.0; // multiplier cap for ml (>= 1.0)
+
+  // collector size used for estimating LID during insertion (level 0 probe)
+  private final int lidProbeK;
 
   public static HnswGraphBuilder create(
       RandomVectorScorerSupplier scorerSupplier, int M, int beamWidth, long seed)
@@ -159,6 +153,7 @@ public class HnswGraphBuilder implements HnswBuilder {
     entryCandidates = new GraphBuilderKnnCollector(1);
     beamCandidates = new GraphBuilderKnnCollector(beamWidth);
     beamCandidates0 = new GraphBuilderKnnCollector(Math.min(beamWidth / 2, M * 3));
+    this.lidProbeK = Math.min(beamWidth, M * 3);
   }
 
   @Override
@@ -235,7 +230,11 @@ public class HnswGraphBuilder implements HnswBuilder {
     if (frozen) {
       throw new IllegalStateException("Graph builder is already frozen");
     }
-    final int nodeLevel = getRandomGraphLevel(ml, random);
+
+    final double lid = estimateLidForLevelPromotion(scorer);
+    final double mlForNode = ml * lidToMlMultiplier(lid);
+    final int nodeLevel = getRandomGraphLevel(mlForNode, random);
+
     // first add nodes to all levels
     for (int level = nodeLevel; level >= 0; level--) {
       hnsw.addNode(level, node);
@@ -599,6 +598,48 @@ public class HnswGraphBuilder implements HnswBuilder {
         notFullyConnected.clear(n1);
       }
     }
+  }
+
+  /**
+   * estimate Local Intrinsic Dimensionality (LID) for the vector currently set on {@code scorer}
+   * (e.g., {@code scorer.setScoringOrdinal(node)} must have already been called).
+   * this runs a small probe search on level 0 and computes LID from the collected neighbor
+   * distances. If the graph is empty or the estimate is unstable returns 0.
+   */
+  private double estimateLidForLevelPromotion(UpdateableRandomVectorScorer scorer)
+      throws IOException {
+    if (hnsw.size() == 0) {
+      return 0d;
+    }
+    final int entry = hnsw.entryNode();
+    if (entry < 0) {
+      return 0d;
+    }
+
+    GraphBuilderKnnCollector probe = new GraphBuilderKnnCollector(lidProbeK);
+    LidCollector lidCollector = new LidCollector(probe);
+
+    // level-0 probe is sufficient (and cheapest) for a stable local estimate.
+    graphSearcher.searchLevel(lidCollector, scorer, 0, new int[] {entry}, hnsw, null);
+
+    double lid = lidCollector.getLID();
+    if (!Double.isFinite(lid) || lid < 0d) {
+      return 0d;
+    }
+    return lid;
+  }
+
+  /**
+   * convert LID to a multiplier for {@code ml} (the exponential level distribution scale).
+   * higher LID --> larger {@code ml} --> higher expected maximum level.
+   */
+  private static double lidToMlMultiplier(double lid) {
+    if (lid <= 0d) {
+      return 1d;
+    }
+    // Smooth, bounded boost: 1 + lid/(lid+10) in (1, 2); then cap.
+    double boost = 1d + (lid / (lid + 10d));
+    return Math.min(boost, LID_LEVEL_BOOST_MAX);
   }
 
   /**

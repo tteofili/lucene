@@ -36,6 +36,11 @@ public class TimeLimitingKnnCollectorManager implements KnnCollectorManager {
   public QueryTimeout getQueryTimeout() {
     return queryTimeout;
   }
+  
+  /** Get the delegate {@link KnnCollectorManager} wrapped by this instance. */
+  public KnnCollectorManager getDelegate() {
+    return delegate;
+  }
 
   @Override
   public KnnCollector newCollector(

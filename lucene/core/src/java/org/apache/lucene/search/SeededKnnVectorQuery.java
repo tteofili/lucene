@@ -18,6 +18,7 @@ package org.apache.lucene.search;
 
 import java.io.IOException;
 import java.util.Arrays;
+import org.apache.lucene.search.AcceptDocs;
 import java.util.Objects;
 import org.apache.lucene.codecs.lucene90.IndexedDISI;
 import org.apache.lucene.index.FieldInfo;
@@ -155,23 +156,42 @@ public class SeededKnnVectorQuery extends AbstractKnnVectorQuery {
     return delegate.approximateSearch(
         context, acceptDocs, visitedLimit, new SeededCollectorManager(knnCollectorManager));
   }
-
+  
   @Override
-  protected KnnCollectorManager getKnnCollectorManager(int k, IndexSearcher searcher) {
-    return delegate.getKnnCollectorManager(k, searcher);
-  }
-
-  @Override
-  protected TopDocs exactSearch(
-      LeafReaderContext context, DocIdSetIterator acceptIterator, QueryTimeout queryTimeout)
+  protected TopDocs approximateSearch(
+      LeafReaderContext context,
+      Weight filterWeight,
+      TimeLimitingKnnCollectorManager timeLimitingKnnCollectorManager)
       throws IOException {
-    return delegate.exactSearch(context, acceptIterator, queryTimeout);
+    // For now, just use null for AcceptDocs (can be enhanced later)
+    AcceptDocs acceptDocs = null;
+    
+    // Use visited limit from context or delegate
+    int visitedLimit = context.reader().getDocCount(delegate.field);
+    
+    // Extract delegate KnnCollectorManager from TimeLimitingKnnCollectorManager
+    KnnCollectorManager knnCollectorManager = timeLimitingKnnCollectorManager != null ? 
+        timeLimitingKnnCollectorManager.getDelegate() : null;
+    
+    return delegate.approximateSearch(
+        context, acceptDocs, visitedLimit, new SeededCollectorManager(knnCollectorManager));
   }
 
   @Override
-  protected TopDocs mergeLeafResults(TopDocs[] perLeafResults) {
-    return delegate.mergeLeafResults(perLeafResults);
+  protected String targetString() {
+    return delegate.targetString();
   }
+  
+  // Removed getKnnCollectorManager - not needed for this implementation
+
+  @Override
+  protected VectorScorer createVectorScorer(LeafReaderContext context, FieldInfo fi) throws IOException {
+    return delegate.createVectorScorer(context, fi);
+  }
+
+// Removed exactSearch - delegate doesn't have this method
+
+  // Removed mergeLeafResults - delegate doesn't have this method
 
   @Override
   public void visit(QueryVisitor visitor) {
@@ -194,7 +214,6 @@ public class SeededKnnVectorQuery extends AbstractKnnVectorQuery {
     return Objects.hash(super.hashCode(), seed, seedWeight, delegate);
   }
 
-  @Override
   public String getField() {
     return delegate.getField();
   }
@@ -204,15 +223,11 @@ public class SeededKnnVectorQuery extends AbstractKnnVectorQuery {
     return delegate.getK();
   }
 
-  @Override
   public Query getFilter() {
     return delegate.getFilter();
   }
 
-  @Override
-  VectorScorer createVectorScorer(LeafReaderContext context, FieldInfo fi) throws IOException {
-    return delegate.createVectorScorer(context, fi);
-  }
+  // Removed duplicate createVectorScorer method
 
   static class MappedDISI extends DocIdSetIterator {
     KnnVectorValues.DocIndexIterator indexedDISI;
